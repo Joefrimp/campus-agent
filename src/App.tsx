@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import { LayoutDashboard, Rocket, Image, BookOpen, Settings, Menu, ToggleLeft, ToggleRight, LogOut } from 'lucide-react';
+import { Analytics } from '@vercel/analytics/react';
 import { cn } from '@/src/lib/utils';
 import DashboardOverview from '@/src/pages/DashboardOverview';
 import OnboardingFlow from '@/src/pages/OnboardingFlow';
@@ -214,6 +215,7 @@ export default function App() {
         <Route path="/auth" element={<LandingAuth />} />
         <Route path="/*" element={<Layout />} />
       </Routes>
+      <Analytics />
     </HashRouter>
   );
 }
