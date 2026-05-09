@@ -24,8 +24,10 @@ COPY --from=builder /app/dist ./dist
 RUN addgroup -g 1001 -S app && adduser -S app -u 1001 -G app
 USER app
 
+# EXPOSE is documentation; Hono actually binds to whatever process.env.PORT
+# the platform sets (Render → 10000, Fly → 8080, local → 8080).
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD ["sh", "-c", "node -e \"fetch('http://localhost:'+(process.env.PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
 
 CMD ["node", "dist/server.js"]

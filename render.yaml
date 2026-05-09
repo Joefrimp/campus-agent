@@ -1,0 +1,63 @@
+# Render Blueprint — one-click deploy of the agent-engine backend.
+# When you connect this repo to Render via "New → Blueprint", Render
+# reads this file, creates the service, and prompts you for the env
+# var values (sync: false = secret, never echoed).
+#
+# Free tier caveat: the service sleeps after 15 minutes of idle and
+# wakes on the next request (~20–40s cold start). Cron jobs paused
+# while sleeping. For demos this is fine; upgrade to "starter" ($7/mo)
+# for always-on production.
+services:
+  - type: web
+    name: agent-engine
+    runtime: docker
+    rootDir: agent-engine
+    plan: free
+    region: frankfurt
+    branch: main
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Required — paste values in the Render dashboard prompt
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: WHAPI_TOKEN
+        sync: false
+      - key: AGENT_ENGINE_SECRET
+        sync: false
+      - key: ADMIN_HMAC_SECRET
+        sync: false
+
+      # Static / safe defaults — pre-filled here, no prompt
+      - key: WHAPI_BASE_URL
+        value: https://gate.whapi.cloud
+      - key: WHAPI_PARTNER_KEY
+        value: ""
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: DEFAULT_TIMEZONE
+        value: Africa/Accra
+      - key: TRIAL_MSG_LIMIT
+        value: "50"
+      - key: QUIET_HOUR_START
+        value: "22"
+      - key: QUIET_HOUR_END
+        value: "7"
+
+      # Optional — paste if you've signed up, otherwise leave blank
+      - key: RESEND_API_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: UPSTASH_REDIS_URL
+        sync: false
+      - key: UPSTASH_REDIS_TOKEN
+        sync: false
+
+      # Render injects PORT itself; the Hono server reads it via process.env.PORT
