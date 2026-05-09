@@ -1,0 +1,51 @@
+# ============================================================
+# Eastern AI — repo-wide gitignore
+# CRITICAL: never commit anything that holds secrets or large
+# generated artifacts. Both subprojects (eastern-ai, agent-engine)
+# are covered by these globs.
+# ============================================================
+
+# Dependencies
+**/node_modules/
+
+# Env / secrets — NEVER commit
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Build outputs
+**/dist/
+**/build/
+**/.next/
+**/.vite/
+**/.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor + OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+
+# Local Claude state
+.claude/settings.local.json
+
+# Misc
+coverage/
+.nyc_output/
+*.pid
+*.seed
+*.pid.lock
