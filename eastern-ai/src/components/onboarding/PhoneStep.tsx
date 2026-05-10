@@ -36,8 +36,10 @@ export function PhoneStep({ userId, onComplete }: PhoneStepProps) {
       } else {
         setError(res.error || 'Could not send verification code. Try again.')
       }
-    } catch {
-      setError('Failed to send code. Please try again.')
+    } catch (e) {
+      // Surface the real network/CORS error so it's debuggable, not "Failed to send code"
+      const msg = e instanceof Error ? e.message : String(e)
+      setError(msg.length > 200 ? msg.slice(0, 200) + '…' : msg)
     }
     setLoading(false)
   }

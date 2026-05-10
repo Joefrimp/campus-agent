@@ -12,6 +12,7 @@
  */
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { logger as honoLogger } from 'hono/logger';
 import { secureHeaders } from 'hono/secure-headers';
 import { config } from './config.js';
@@ -31,6 +32,27 @@ const app = new Hono();
 
 app.use('*', secureHeaders());
 app.use('*', honoLogger((str) => logger.info(str)));
+
+// CORS — allow the frontend (Vercel + localhost dev + LAN IPs) to call us.
+// Without this, browsers block every request from a different origin and
+// the React app shows a generic "Failed to send code".
+app.use(
+  '*',
+  cors({
+    origin: (origin) => {
+      if (!origin) return origin; // server-to-server, Whapi webhooks
+      if (origin.endsWith('.vercel.app')) return origin;        // any Vercel deploy
+      if (/^http:\/\/localhost:\d+$/.test(origin)) return origin; // local dev
+      if (/^http:\/\/192\.168\.\d+\.\d+:\d+$/.test(origin)) return origin; // LAN
+      if (/^http:\/\/172\.\d+\.\d+\.\d+:\d+$/.test(origin)) return origin;
+      return null; // reject everything else
+    },
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Eastern-AI-Secret', 'X-Admin-Sig'],
+    credentials: true,
+    maxAge: 86400,
+  }),
+);
 
 // --- Public ---
 app.get('/health', handleHealth);
