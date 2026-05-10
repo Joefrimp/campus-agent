@@ -150,7 +150,7 @@ export function LandingPage() {
 
       {/* Footer */}
       <footer className="relative z-10 text-center py-6 text-xs text-text-faint border-t border-border">
-        © {new Date().getFullYear()} Eastern AI · Built for African entrepreneurs
+        © {new Date().getFullYear()} Eastern AI
       </footer>
 
       {modal === 'create' && <CreateAccountModal onClose={() => setModal(null)} />}
