@@ -11,10 +11,13 @@ services:
   - type: web
     name: agent-engine
     runtime: docker
-    rootDir: agent-engine
     plan: free
     region: frankfurt
     branch: main
+    # Dockerfile lives in a subfolder; spell it out explicitly so Render's
+    # builder doesn't go looking at the repo root (where there is none).
+    dockerfilePath: ./agent-engine/Dockerfile
+    dockerContext: ./agent-engine
     healthCheckPath: /health
     autoDeploy: true
     envVars:
