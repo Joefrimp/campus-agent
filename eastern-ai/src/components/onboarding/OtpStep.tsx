@@ -57,7 +57,7 @@ export function OtpStep({ userId, phone, onVerified }: OtpStepProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <p className="text-sm text-text-muted">
-        Code sent to <span className="text-text font-medium">{phone}</span> via WhatsApp
+        Code sent to your email — check inbox (and spam)
       </p>
       <Input
         label="Verification Code"
