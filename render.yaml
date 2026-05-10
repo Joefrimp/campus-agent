@@ -14,10 +14,9 @@ services:
     plan: free
     region: frankfurt
     branch: main
-    # Dockerfile lives in a subfolder; spell it out explicitly so Render's
-    # builder doesn't go looking at the repo root (where there is none).
-    dockerfilePath: ./agent-engine/Dockerfile
-    dockerContext: ./agent-engine
+    # Dockerfile lives at the repo ROOT (./Dockerfile) and pulls from
+    # agent-engine/ internally. Defaults are used to avoid Render UI
+    # whitespace bugs with subfolder paths.
     healthCheckPath: /health
     autoDeploy: true
     envVars:
