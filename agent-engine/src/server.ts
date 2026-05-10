@@ -26,6 +26,7 @@ import { handleApprovalResolve } from './webhooks/approvals.js';
 import { handleAdminReplay } from './webhooks/admin-replay.js';
 import { handleSendOtp, handleVerifyOtp } from './webhooks/otp.js';
 import { handlePairPhone } from './webhooks/pair-phone.js';
+import { handleWhatsAppSetup } from './webhooks/whatsapp-setup.js';
 import { startScheduler } from './scheduler/index.js';
 
 const app = new Hono();
@@ -74,6 +75,8 @@ app.post('/otp/send', handleSendOtp);
 app.post('/otp/verify', handleVerifyOtp);
 app.use('/whapi/pair-phone', sharedSecretAuth);
 app.post('/whapi/pair-phone', handlePairPhone);
+app.use('/whatsapp-setup', sharedSecretAuth);
+app.post('/whatsapp-setup', handleWhatsAppSetup);
 
 // --- Admin (HMAC-signed) ---
 app.post('/admin/replay', handleAdminReplay);
