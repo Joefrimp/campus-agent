@@ -32,8 +32,9 @@ export function SetupTab({ userId, brandVoiceProvisioned }: SetupTabProps) {
     try {
       await setupWhatsApp(userId)
       await refetch()
-    } catch {
-      setError('Failed to initiate connection. Please try again.')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setError(msg.length > 240 ? msg.slice(0, 240) + '…' : msg)
     }
     setConnecting(false)
   }
