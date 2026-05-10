@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "eastern-ai/dist",
+  "installCommand": "echo \"skip root install — build script handles it\"",
+  "framework": null,
+  "rewrites": [
+    { "source": "/((?!assets/|favicon.svg|vector-logo.png|eastern-ai-logo.png).*)", "destination": "/index.html" }
+  ]
+}

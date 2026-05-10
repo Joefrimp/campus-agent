@@ -1,0 +1,8 @@
+{
+  "name": "campus-agent-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "vercel-build": "cd eastern-ai && npm install && npm run build"
+  }
+}
