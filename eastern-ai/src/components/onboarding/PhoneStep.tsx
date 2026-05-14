@@ -53,7 +53,7 @@ export function PhoneStep({ userId, onComplete }: PhoneStepProps) {
         onChange={e => setPhone(e.target.value)}
         placeholder="+233 XX XXX XXXX"
         inputMode="tel"
-        hint="We'll send a 6-digit verification code to your email"
+        hint="We'll send a 6-digit verification code via WhatsApp"
         error={error}
         autoFocus
       />

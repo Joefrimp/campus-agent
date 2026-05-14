@@ -47,7 +47,7 @@ export function LandingPage() {
 
       {/* Nav */}
       <nav className="relative z-10 flex items-center justify-between px-6 py-5 max-w-5xl mx-auto w-full">
-        <Logo variant="eastern-ai" size="sm" showText textClassName="text-lg" />
+        <Logo variant="vector" size="sm" showText textClassName="text-lg" />
         <div className="flex items-center gap-2">
           <button
             onClick={() => setModal('signin')}
@@ -67,17 +67,18 @@ export function LandingPage() {
       {/* Hero */}
       <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 py-12 text-center">
 
-        {/* Hero logo */}
-        <div className="mb-6">
-          <Logo variant="eastern-ai" size="lg" />
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-accent/25 bg-accent/10 text-accent text-xs font-medium mb-6">
+          <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+          New · Autonomous WhatsApp Operator
         </div>
 
-        <h1 className="text-5xl md:text-6xl font-bold text-text mb-4 tracking-tight">
-          Eastern AI
+        <h1 className="text-5xl md:text-6xl font-bold text-text mb-4 tracking-tight text-balance max-w-3xl">
+          Meet Vector — the AI that runs your business while you focus on what matters.
         </h1>
-        <p className="text-base text-text-muted max-w-lg mb-14 leading-relaxed">
-          Autonomous AI Ops for Campus Entrepreneurs. Deploy a highly tuned AI agent
-          that manages WhatsApp sales while you sleep.
+        <p className="text-base md:text-lg text-text-muted max-w-2xl mb-14 leading-relaxed">
+          Replies to every customer, takes orders, confirms payments, books appointments,
+          and reports back to you nightly — all on WhatsApp, 24/7.
+          You stay in class. Vector keeps the business running.
         </p>
 
         {/* Pricing cards */}

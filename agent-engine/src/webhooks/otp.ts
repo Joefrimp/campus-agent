@@ -13,7 +13,6 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import { supabase } from '../lib/supabase.js';
 import { whapiPost } from '../lib/whapi.js';
-import { sendEmail } from '../lib/email.js';
 import { config } from '../config.js';
 import { logger } from '../lib/logger.js';
 import { audit } from '../lib/audit.js';
@@ -69,44 +68,7 @@ export async function handleSendOtp(c: Context): Promise<Response> {
     return c.json({ success: false, error: 'Could not store OTP' }, 200);
   }
 
-  // Resolve the user's email from auth.users (their signup identity)
-  const { data: authResp, error: authErr } = await supabase.auth.admin.getUserById(user_id);
-  const email = authResp?.user?.email;
-  if (authErr || !email) {
-    logger.error({ err: authErr }, 'OTP: could not resolve user email');
-    return c.json({ success: false, error: 'Could not find your email on file. Try signing out and back in.' }, 200);
-  }
-
-  // Primary path — email via Resend
-  if (config.RESEND_API_KEY) {
-    const html = `
-      <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#0F1A2E">
-        <h2 style="margin:0 0 8px;font-size:20px">Your Eastern AI verification code</h2>
-        <p style="color:#4F5E78;font-size:14px;margin:0 0 24px">
-          Enter this code on the verification page to finish setting up your account. It expires in 10 minutes.
-        </p>
-        <div style="font-size:32px;letter-spacing:8px;font-weight:700;color:#2563EB;background:#F1F5FA;border-radius:12px;padding:18px 24px;text-align:center;font-family:Menlo,Consolas,monospace">${code}</div>
-        <p style="color:#8896AC;font-size:12px;margin:24px 0 0">
-          Didn't request this? You can safely ignore this email — no action will be taken on your account.
-        </p>
-      </div>`.trim();
-    const text = `Your Eastern AI verification code is ${code}. It expires in 10 minutes.`;
-    const result = await sendEmail({
-      to: email,
-      subject: `Eastern AI verification code: ${code}`,
-      html,
-      text,
-    });
-    if (result.sent) {
-      await audit({ user_id, workflow: 'otp-send-email', output: { email_last8: email.slice(-8) } });
-      return c.json({ success: true, channel: 'email' });
-    }
-    logger.warn({ reason: result.reason }, 'OTP: email send failed, falling through');
-    // Fall through to WhatsApp fallback below
-  }
-
-  // Fallback — WhatsApp via Whapi (only attempted if Resend isn't configured
-  // or it failed). Keeps the system usable even without Resend.
+  // WhatsApp delivery via Whapi — primary channel.
   const message = `Your Eastern AI verification code is ${code}. It expires in 10 minutes.`;
   const result = await whapiPost({
     token: config.WHAPI_TOKEN,
@@ -115,7 +77,7 @@ export async function handleSendOtp(c: Context): Promise<Response> {
   });
   if (!result.ok) {
     const detail = typeof result.body === 'string' ? result.body : JSON.stringify(result.body);
-    logger.error({ status: result.status, detail }, 'OTP whapi fallback failed');
+    logger.error({ status: result.status, detail }, 'OTP whapi send failed');
     await audit({
       user_id,
       workflow: 'otp-send-fail',
@@ -123,11 +85,15 @@ export async function handleSendOtp(c: Context): Promise<Response> {
       output: { detail },
       severity: 'error',
     });
-    return c.json({
-      success: false,
-      error:
-        'Could not deliver code. Email is not configured on the server (set RESEND_API_KEY) and the WhatsApp fallback also failed. Contact support.',
-    }, 200);
+    const userMsg =
+      result.status === 401 || result.status === 403
+        ? 'WhatsApp channel not authorized. Reconnect Whapi and try again.'
+        : result.status === 422
+          ? 'That phone number was rejected by WhatsApp. Check the country code (no spaces, no "+").'
+          : result.status === 429
+            ? 'WhatsApp send limit reached. Try again later.'
+            : `Could not deliver OTP (whapi ${result.status}).`;
+    return c.json({ success: false, error: userMsg }, 200);
   }
   await audit({ user_id, workflow: 'otp-send-whatsapp', input: { phone_last4: normalized.slice(-4) } });
   return c.json({ success: true, channel: 'whatsapp' });
