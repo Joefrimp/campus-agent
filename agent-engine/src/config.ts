@@ -49,6 +49,14 @@ const schema = z.object({
   SENTRY_DSN: z.string().optional().default(''),
   UPSTASH_REDIS_URL: z.string().optional().default(''),
   UPSTASH_REDIS_TOKEN: z.string().optional().default(''),
+
+  // Pro auto-activation (MoMo OCR). Optional — falls back to operator_config row.
+  // When BOTH env + row are present, env wins (so you can override per-deploy).
+  EASTERN_AI_MOMO_NUMBER: z.string().optional().default(''),
+  EASTERN_AI_MOMO_NAME: z.string().optional().default(''),
+  EASTERN_AI_PRO_PRICE_GHS: z.coerce.number().positive().default(100),
+  EASTERN_AI_ACTIVATION_PHONE: z.string().optional().default(''),
+  EASTERN_AI_ACTIVATION_WHAPI_TOKEN: z.string().optional().default(''),
 });
 
 const parsed = schema.safeParse(process.env);

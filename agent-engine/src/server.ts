@@ -27,6 +27,14 @@ import { handleAdminReplay } from './webhooks/admin-replay.js';
 import { handleSendOtp, handleVerifyOtp } from './webhooks/otp.js';
 import { handlePairPhone } from './webhooks/pair-phone.js';
 import { handleWhatsAppSetup } from './webhooks/whatsapp-setup.js';
+import {
+  handleProPaymentConfig,
+  handleStartUpgrade,
+  handleActivationStatus,
+  handleCancelUpgrade,
+  handleActivationWebhook,
+  handleManualGrantPro,
+} from './webhooks/billing.js';
 import { startScheduler } from './scheduler/index.js';
 
 const app = new Hono();
@@ -58,10 +66,12 @@ app.use(
 // --- Public ---
 app.get('/health', handleHealth);
 app.get('/', (c) => c.text('agent-engine — running'));
+app.get('/config/pro-payment', handleProPaymentConfig);
 
 // --- Whapi → us (no shared secret; Whapi doesn't sign requests) ---
 app.post('/whapi/inbound', handleInboundWebhook);
 app.post('/whapi/channel-status', handleChannelStatus);
+app.post('/billing/activation-webhook', handleActivationWebhook);
 
 // --- Frontend → us (require X-Eastern-AI-Secret) ---
 app.use('/onboarding', sharedSecretAuth);
@@ -77,9 +87,16 @@ app.use('/whapi/pair-phone', sharedSecretAuth);
 app.post('/whapi/pair-phone', handlePairPhone);
 app.use('/whatsapp-setup', sharedSecretAuth);
 app.post('/whatsapp-setup', handleWhatsAppSetup);
+app.use('/billing/start-upgrade', sharedSecretAuth);
+app.use('/billing/activation-status', sharedSecretAuth);
+app.use('/billing/cancel-upgrade', sharedSecretAuth);
+app.post('/billing/start-upgrade', handleStartUpgrade);
+app.get('/billing/activation-status', handleActivationStatus);
+app.post('/billing/cancel-upgrade', handleCancelUpgrade);
 
 // --- Admin (HMAC-signed) ---
 app.post('/admin/replay', handleAdminReplay);
+app.post('/admin/grant-pro', handleManualGrantPro);
 
 // --- 404 + global error ---
 app.notFound((c) => c.json({ error: 'not found' }, 404));

@@ -13,6 +13,7 @@ import { runCircuitWatcher } from './circuit-breaker.js';
 import { runDLQ } from './dlq-processor.js';
 import { runDeliveryBatch } from '../owner-commands/delivery.js';
 import { runWeeklyEmailDigest } from './weekly-email-digest.js';
+import { sweepExpiredActivations } from '../billing/activation.js';
 
 export function startScheduler(): void {
   logger.info('starting internal scheduler');
@@ -36,7 +37,15 @@ export function startScheduler(): void {
   // gates per-tenant on Friday 19:30 local. Slim window keeps it idempotent.
   cron.schedule('30,35 * * * *', () => safe('weekly-email', runWeeklyEmailDigest));
 
-  logger.info('scheduler running: W7 (30m), W8 (hourly), W10 (5m), W12 (15m), delivery (hourly), weekly-email (Fri 19:30 local)');
+  // Pro activation sweep — every 5 min, marks expired pending rows.
+  cron.schedule('*/5 * * * *', () =>
+    safe('billing-sweep', async () => {
+      const n = await sweepExpiredActivations();
+      if (n > 0) logger.info({ expired: n }, 'pro activation sweep');
+    }),
+  );
+
+  logger.info('scheduler running: W7 (30m), W8 (hourly), W10 (5m), W12 (15m), delivery (hourly), weekly-email (Fri 19:30 local), billing-sweep (5m)');
 }
 
 async function safe(name: string, fn: () => Promise<void>): Promise<void> {

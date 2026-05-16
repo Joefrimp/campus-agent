@@ -19,6 +19,7 @@ import { runBrain } from './brain.js';
 import { isPanicCommand, handlePanic } from './panic.js';
 import { ingestVoiceNote } from './voice.js';
 import { ingestPaymentImage } from './payment.js';
+import { matchForwardedImage, formatMatchReply } from './image-match.js';
 import { whapiMarkRead } from '../lib/whapi.js';
 import { config } from '../config.js';
 import type { WhapiInbound, Profile, BusinessSettings, Customer } from '../types.js';
