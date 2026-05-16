@@ -56,6 +56,10 @@ export interface BusinessSettings {
   tenant_style_guide?: string | null;
   /** Auto-extracted style summary (v2). */
   learned_style_summary?: string | null;
+  /** 'product' | 'service' | 'both' — drives per-tenant tool catalogue. */
+  business_kind?: 'product' | 'service' | 'both' | null;
+  /** JSON [{from,to,label,...}] — daily/holiday blocks. */
+  schedule_blocks?: unknown[];
 }
 
 export interface Customer {

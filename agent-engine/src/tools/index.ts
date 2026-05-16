@@ -17,8 +17,25 @@ export interface ToolContext {
   customer_id: string | null;
 }
 
-export function buildTools(ctx: ToolContext) {
-  return {
+/**
+ * Per-tenant capability flags — tells buildTools which tools to expose.
+ * Default behaviour (when omitted) is to expose ALL tools, preserving the
+ * original surface for any code path that hasn't been updated yet.
+ */
+export interface ToolCapabilities {
+  /** Expose check_availability + book_appointment. Default true. */
+  includeAppointments?: boolean;
+  /** Provider names that have an active tool_connections row.
+   *  Used for future Calendar/Gmail/Drive/Notion tools. Default []. */
+  connections?: string[];
+}
+
+export function buildTools(ctx: ToolContext, caps: ToolCapabilities = {}) {
+  const includeAppointments = caps.includeAppointments !== false;
+  /* `connections` is plumbed through for v2 Calendar/Gmail tools. */
+  void caps.connections;
+
+  const allTools = {
     lookup_price: tool({
       description:
         "Look up an item (product or service) from the owner's catalogue. ALWAYS call before quoting any price. Returns up to 5 fuzzy matches with `price`, `min_price` (negotiation floor — NEVER go below; null = no discount allowed), `in_stock`, `description`, `kind` (product|service|both), `unit` (e.g. '30 min session'), and `duration_minutes` (for services).",
@@ -330,7 +347,56 @@ export function buildTools(ctx: ToolContext) {
         return { scheduled: true, fires_in_hours: 24 };
       },
     }),
+
+    report_missing_capability: tool({
+      description:
+        "Call ONCE per conversation when the customer asks for something you cannot do because the owner has not connected the required tool/integration (e.g. live delivery tracking, online card payments, calendar sync, shipping labels). DO NOT call for things you simply do not know — only for genuine capability gaps. Logs the gap so the owner can see aggregate signal (\"5 customers asked about X this week\") and decide whether to enable that integration.",
+      parameters: z.object({
+        category: z.enum([
+          'delivery_tracking',
+          'card_payment',
+          'calendar_sync',
+          'email_notifications',
+          'shipping_label',
+          'catalogue_image',
+          'inventory_integration',
+          'other',
+        ]),
+        suggested_capability: z.string().describe('One short phrase naming the tool/integration that would solve this (e.g. "Hubtel courier API", "Google Calendar sync")'),
+        source_message: z.string().describe('The exact customer message that revealed the gap (verbatim, ≤200 chars)'),
+      }),
+      execute: async ({ category, suggested_capability, source_message }) => {
+        const { error } = await supabase.from('tool_gaps').insert({
+          user_id: ctx.user_id,
+          customer_phone: ctx.customer_phone,
+          category,
+          source_message: source_message.slice(0, 280),
+          suggested_capability: suggested_capability.slice(0, 120),
+        });
+        if (error) {
+          logger.warn({ err: error }, 'report_missing_capability insert failed');
+          // Non-fatal — the agent should still try to be useful to the customer.
+          return { logged: false };
+        }
+        return {
+          logged: true,
+          instruction:
+            'Be honest with the customer that this specific capability is not available right now. Suggest the best adjacent thing you CAN do (manual quote, scheduled follow-up, owner handoff).',
+        };
+      },
+    }),
   };
+
+  // Per-tenant capability filter — return a slimmed set when the tenant
+  // hasn't enabled certain features. Hiding tools (rather than letting the
+  // agent call them and fail) prevents hallucinated tool calls and tightens
+  // function-calling latency.
+  if (!includeAppointments) {
+    const { check_availability: _ca, book_appointment: _ba, ...rest } = allTools;
+    void _ca; void _ba;
+    return rest;
+  }
+  return allTools;
 }
 
 export type AgentTools = ReturnType<typeof buildTools>;

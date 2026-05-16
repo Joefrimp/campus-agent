@@ -67,6 +67,7 @@ const COMMAND_RE = new RegExp(
       'DRAFT GROUP',
       'WEEK PLAN',
       'DELIVERIES',
+      'GAPS',
     ].join('|') +
     ')$',
   'i',
@@ -163,7 +164,53 @@ async function dispatch(user_id: string, raw: string): Promise<string> {
   // ─── delivery ────────────────────────────────────
   if (upper === 'DELIVERIES') return cmdDeliveries(user_id);
 
+  // ─── tool gaps ───────────────────────────────────
+  if (upper === 'GAPS') return cmdGaps(user_id);
+
   return 'Command recognized but not handled. Send HELP for the list.';
+}
+
+async function cmdGaps(user_id: string): Promise<string> {
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { data } = await supabase
+    .from('tool_gaps')
+    .select('category, suggested_capability, source_message, created_at')
+    .eq('user_id', user_id)
+    .is('resolved_at', null)
+    .gt('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (!data || data.length === 0) {
+    return '✅ No missing-capability requests in the last 30 days. Vector has everything it needs so far.';
+  }
+
+  // Group by category, count
+  const byCat = new Map<string, { count: number; suggestion: string; sample: string }>();
+  for (const g of data) {
+    const cat = (g as { category: string }).category;
+    const prev = byCat.get(cat);
+    if (prev) {
+      prev.count += 1;
+    } else {
+      byCat.set(cat, {
+        count: 1,
+        suggestion: (g as { suggested_capability: string }).suggested_capability ?? '',
+        sample: (g as { source_message: string }).source_message ?? '',
+      });
+    }
+  }
+
+  const lines = ['🧩 Missing capabilities (last 30 days):', ''];
+  const sorted = [...byCat.entries()].sort((a, b) => b[1].count - a[1].count);
+  for (const [cat, info] of sorted.slice(0, 8)) {
+    lines.push(`• ${info.count}× ${cat.replace(/_/g, ' ')}`);
+    if (info.suggestion) lines.push(`  Suggest: ${info.suggestion}`);
+    if (info.sample) lines.push(`  Example: "${info.sample.slice(0, 90)}${info.sample.length > 90 ? '…' : ''}"`);
+    lines.push('');
+  }
+  lines.push('Connect any of the above to unlock new conversations.');
+  return lines.join('\n');
 }
 
 function helpText(): string {
@@ -179,6 +226,7 @@ function helpText(): string {
     'Analytics: BEST SELLER [WEEK|MONTH] · TOP CUSTOMER [WEEK|MONTH] · CONVERSION RATE',
     'Marketing: DRAFT STATUS · DRAFT GROUP · WEEK PLAN',
     'Delivery:  DELIVERIES',
+    'Gaps:      GAPS (capabilities customers asked for)',
   ].join('\n');
 }
 

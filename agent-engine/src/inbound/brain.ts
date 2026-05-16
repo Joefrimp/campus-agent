@@ -6,8 +6,9 @@
 import { generateText } from 'ai';
 import { models } from '../lib/gemini.js';
 import { supabase } from '../lib/supabase.js';
-import { buildTools, type ToolContext } from '../tools/index.js';
+import { buildTools, type ToolContext, type ToolCapabilities } from '../tools/index.js';
 import { logger } from '../lib/logger.js';
+import { planTools } from './planner.js';
 import type { Profile, BusinessSettings, Customer } from '../types.js';
 
 const ESCALATE_SENTINEL = '[ESCALATE_PRO]';
@@ -37,9 +38,21 @@ export async function runBrain(args: BrainArgs): Promise<BrainResult> {
     customer_id: args.customer.id,
   };
 
-  const tools = buildTools(ctx);
+  // Per-tenant tool catalogue: skip appointment tools when the business is
+  // strictly product-only. (business_kind 'service' or 'both' => include.)
+  const caps: ToolCapabilities = {
+    includeAppointments:
+      (args.settings.business_kind ?? 'product') !== 'product',
+    connections: await loadConnectedProviders(args.profile.id),
+  };
+  const tools = buildTools(ctx, caps);
   const messages = await loadMemory(args.profile.id, args.customer.phone);
-  const system = buildSystemPrompt(args);
+
+  // Optional planner hint — runs only on complex messages (>30 chars +
+  // multi-sentence / connector). Cheap Flash-Lite, ~$0.0001 per fire.
+  const plannerHint = await planTools(args.current_message, Object.keys(tools));
+
+  const system = buildSystemPrompt(args) + plannerHint;
 
   // First pass with Flash
   const flashResult = await generateText({
@@ -289,4 +302,14 @@ function cleanReply(text: string): string {
     .replace(/^["']|["']$/g, '')
     .replace(/^Response:\s*/i, '')
     .trim();
+}
+
+/** Provider names for tool_connections rows with status='connected'. */
+async function loadConnectedProviders(user_id: string): Promise<string[]> {
+  const { data } = await supabase
+    .from('tool_connections')
+    .select('provider')
+    .eq('user_id', user_id)
+    .eq('status', 'connected');
+  return (data ?? []).map((r: { provider: string }) => r.provider);
 }
