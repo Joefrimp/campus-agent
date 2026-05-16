@@ -39,11 +39,6 @@ export interface SetupWhatsAppResponse {
   status: string
 }
 
-export interface PaymentSessionResponse {
-  success: boolean
-  payment_url: string
-}
-
 export function sendOtp(userId: string, phone: string) {
   return post<OtpResponse>('/otp/send', { user_id: userId, phone })
 }
@@ -64,8 +59,62 @@ export function setHumanInLoop(userId: string, enabled: boolean) {
   return post<{ success: boolean }>('/set-hitl', { user_id: userId, enabled })
 }
 
-export function createPaymentSession(userId: string) {
-  return post<PaymentSessionResponse>('/create-payment-session', { user_id: userId, plan: 'pro' })
+/* ─── Pro auto-activation (MoMo OCR) ─── */
+
+export interface ProPaymentConfig {
+  momo_number: string
+  momo_account_name: string
+  pro_price_ghs: number
+  activation_whatsapp: string
+  activation_minutes: number
+  configured: boolean
+}
+
+export async function getProPaymentConfig(): Promise<ProPaymentConfig> {
+  // Public endpoint — no shared secret needed.
+  const res = await fetch(`${BASE}/config/pro-payment`)
+  if (!res.ok) throw new Error(`config failed (${res.status})`)
+  return res.json() as Promise<ProPaymentConfig>
+}
+
+export interface StartUpgradeResponse {
+  success: boolean
+  code: string
+  amount_due_ghs: number
+  expires_at: string
+  duration_months: number
+  operator: ProPaymentConfig
+  error?: string
+}
+
+export function startProUpgrade(userId: string, durationMonths = 1) {
+  return post<StartUpgradeResponse>('/billing/start-upgrade', {
+    user_id: userId,
+    duration_months: durationMonths,
+  })
+}
+
+export interface ActivationStatusResponse {
+  success: boolean
+  code?: string
+  status?: 'pending' | 'paid' | 'expired' | 'cancelled'
+  expires_at?: string
+  matched_at?: string | null
+  error?: string
+}
+
+export async function getActivationStatus(userId: string, code: string): Promise<ActivationStatusResponse> {
+  const url = `${BASE}/billing/activation-status?user_id=${encodeURIComponent(userId)}&code=${encodeURIComponent(code)}`
+  const res = await fetch(url, { headers: { 'X-Eastern-AI-Secret': SECRET || '' } })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`activation-status failed (${res.status}): ${text}`)
+  }
+  return res.json() as Promise<ActivationStatusResponse>
+}
+
+export function cancelProUpgrade(userId: string, code: string) {
+  return post<{ success: boolean }>('/billing/cancel-upgrade', { user_id: userId, code })
 }
 
 export interface PairPhoneResponse {

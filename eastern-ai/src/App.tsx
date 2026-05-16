@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { LandingPage } from './pages/LandingPage'
+import { SignInPage } from './pages/SignInPage'
+import { RegisterPage } from './pages/RegisterPage'
 import { OnboardingPage } from './pages/OnboardingPage'
 import { VerifyPage } from './pages/VerifyPage'
 import { ResetPasswordPage } from './pages/ResetPasswordPage'
@@ -22,6 +24,8 @@ export default function App() {
       <Routes>
         {/* Public */}
         <Route path="/" element={<LandingPage />} />
+        <Route path="/signin" element={<SignInPage />} />
+        <Route path="/register" element={<RegisterPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
 
         {/* Auth-only (no verification required) */}

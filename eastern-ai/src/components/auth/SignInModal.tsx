@@ -43,14 +43,14 @@ export function SignInModal({ onClose, onSwitchToCreate, onForgotPassword }: Pro
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md rounded-2xl bg-surface border border-border p-8 shadow-elev">
-        <h2 className="text-base font-bold tracking-[0.2em] text-text uppercase mb-1">Welcome back</h2>
-        <p className="text-sm text-text-muted mb-6">Sign in to your Eastern AI account.</p>
+      <div className="relative z-10 w-full max-w-md rounded-2xl bg-[#0A0A0A] border border-[rgba(255,255,255,0.1)] p-8 shadow-elev">
+        <h2 className="font-[Outfit] font-bold text-2xl text-white mb-1.5">Welcome back</h2>
+        <p className="text-sm text-[#E0E0E0] mb-7">Sign in to your Eastern AI account.</p>
 
         <button
           onClick={handleGoogle}
           disabled={googleLoading}
-          className="flex items-center justify-center gap-3 w-full h-12 rounded-xl bg-white text-gray-900 font-semibold text-sm hover:bg-gray-100 active:scale-[0.98] transition-all disabled:opacity-60 mb-5 border border-border"
+          className="flex items-center justify-center gap-3 w-full h-12 rounded-full bg-white text-gray-900 font-[Outfit] font-bold text-sm hover:brightness-95 active:scale-[0.98] transition-all disabled:opacity-60 mb-5"
         >
           {googleLoading ? (
             <svg className="animate-spin h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24">
@@ -69,9 +69,9 @@ export function SignInModal({ onClose, onSwitchToCreate, onForgotPassword }: Pro
         </button>
 
         <div className="flex items-center gap-3 mb-5">
-          <div className="flex-1 h-px bg-border" />
-          <span className="text-[10px] tracking-[0.15em] text-text-faint uppercase font-semibold">Or with email</span>
-          <div className="flex-1 h-px bg-border" />
+          <div className="flex-1 h-px bg-[rgba(255,255,255,0.1)]" />
+          <span className="font-[Inter] text-[10px] tracking-[0.15em] text-[#A1A1AA] uppercase font-medium">Or with email</span>
+          <div className="flex-1 h-px bg-[rgba(255,255,255,0.1)]" />
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3">

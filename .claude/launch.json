@@ -5,7 +5,8 @@
       "name": "eastern-ai",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "eastern-ai"],
-      "port": 5173
+      "port": 5173,
+      "autoPort": true
     }
   ]
 }

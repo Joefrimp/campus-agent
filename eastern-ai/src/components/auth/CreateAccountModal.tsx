@@ -13,7 +13,7 @@ function strengthScore(pw: string): number {
   return s
 }
 
-const STRENGTH_COLORS = ['bg-red-500', 'bg-orange-400', 'bg-yellow-400', 'bg-green-400']
+const STRENGTH_COLORS = ['bg-[#F87171]', 'bg-[#FB923C]', 'bg-[#FACC15]', 'bg-[#00FF66]']
 
 interface Props { onClose: () => void }
 
@@ -91,19 +91,19 @@ export function CreateAccountModal({ onClose }: Props) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-        <div className="relative z-10 w-full max-w-md rounded-2xl bg-surface border border-border p-8 shadow-2xl text-center">
-          <div className="h-14 w-14 rounded-2xl bg-accent/10 flex items-center justify-center mx-auto mb-4">
-            <svg className="h-7 w-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="relative z-10 w-full max-w-md rounded-2xl bg-[#0A0A0A] border border-[rgba(255,255,255,0.1)] p-8 shadow-2xl text-center">
+          <div className="h-14 w-14 rounded-2xl bg-[#00FF66]/10 border border-[#00FF66]/20 flex items-center justify-center mx-auto mb-5">
+            <svg className="h-7 w-7 text-[#00FF66]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
             </svg>
           </div>
-          <h2 className="text-lg font-bold text-text mb-2">Check your email</h2>
-          <p className="text-sm text-text-muted mb-6">
-            We sent a confirmation link to <span className="text-text font-medium">{form.email}</span>. Click it to activate your account, then sign in.
+          <h2 className="font-[Outfit] font-bold text-2xl text-white mb-2">Check your email</h2>
+          <p className="text-sm text-[#E0E0E0] mb-7">
+            We sent a confirmation link to <span className="text-white font-medium">{form.email}</span>. Click it to activate your account, then sign in.
           </p>
           <button
             onClick={onClose}
-            className="h-11 px-8 rounded-xl bg-accent text-white text-sm font-semibold hover:bg-accent/90 transition-colors"
+            className="h-11 px-8 rounded-full bg-[#00FF66] text-black font-[Outfit] font-bold text-sm hover:brightness-110 transition-all"
           >
             Got it
           </button>
@@ -115,19 +115,19 @@ export function CreateAccountModal({ onClose }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md rounded-2xl bg-surface border border-border p-8 shadow-2xl max-h-[92vh] overflow-y-auto">
+      <div className="relative z-10 w-full max-w-md rounded-2xl bg-[#0A0A0A] border border-[rgba(255,255,255,0.1)] p-8 shadow-2xl max-h-[92vh] overflow-y-auto">
 
-        <h2 className="text-base font-bold tracking-[0.2em] text-text uppercase mb-1">Create Account</h2>
-        <p className="text-sm text-text-muted mb-6">Join Eastern AI to deploy your agent.</p>
+        <h2 className="font-[Outfit] font-bold text-2xl text-white mb-1.5">Create account</h2>
+        <p className="text-sm text-[#E0E0E0] mb-7">Join Eastern AI to deploy your Vector.</p>
 
         {/* Google */}
         <button
           onClick={handleGoogle}
           disabled={googleLoading}
-          className="flex items-center justify-center gap-3 w-full h-12 rounded-xl bg-white text-gray-900 font-semibold text-sm hover:bg-gray-100 active:scale-[0.98] transition-all disabled:opacity-60 mb-5"
+          className="flex items-center justify-center gap-3 w-full h-12 rounded-full bg-white text-gray-900 font-[Outfit] font-bold text-sm hover:brightness-95 active:scale-[0.98] transition-all disabled:opacity-60 mb-5"
         >
           {googleLoading ? (
-            <svg className="animate-spin h-4 w-4 text-text-muted" fill="none" viewBox="0 0 24 24">
+            <svg className="animate-spin h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
@@ -144,9 +144,9 @@ export function CreateAccountModal({ onClose }: Props) {
 
         {/* Divider */}
         <div className="flex items-center gap-3 mb-5">
-          <div className="flex-1 h-px bg-border" />
-          <span className="text-[10px] tracking-[0.15em] text-text-faint uppercase font-semibold">Or register with email</span>
-          <div className="flex-1 h-px bg-border" />
+          <div className="flex-1 h-px bg-[rgba(255,255,255,0.1)]" />
+          <span className="font-[Inter] text-[10px] tracking-[0.15em] text-[#A1A1AA] uppercase font-medium">Or register with email</span>
+          <div className="flex-1 h-px bg-[rgba(255,255,255,0.1)]" />
         </div>
 
         {/* Form */}
@@ -188,7 +188,7 @@ export function CreateAccountModal({ onClose }: Props) {
                 {[0, 1, 2, 3].map(i => (
                   <div
                     key={i}
-                    className={`h-1 flex-1 rounded-full transition-all duration-300 ${i < score ? STRENGTH_COLORS[score - 1] : 'bg-border'}`}
+                    className={`h-1 flex-1 rounded-full transition-all duration-300 ${i < score ? STRENGTH_COLORS[score - 1] : 'bg-[rgba(255,255,255,0.1)]'}`}
                   />
                 ))}
               </div>
@@ -202,17 +202,22 @@ export function CreateAccountModal({ onClose }: Props) {
             error={form.confirmPassword && form.password !== form.confirmPassword ? "Passwords don't match" : ''}
           />
 
-          {error && <p className="text-sm text-red-400 pt-1">{error}</p>}
+          {error && <p className="text-sm text-[#F87171] pt-1">{error}</p>}
 
           <div className="flex gap-3 pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="flex-none h-11 px-5 rounded-xl text-sm font-medium text-text-muted hover:text-text transition-colors"
+              className="flex-none h-12 px-5 rounded-full border border-[rgba(255,255,255,0.1)] font-[Inter] text-sm text-white hover:border-[#00FF66] hover:text-[#00FF66] transition-all"
             >
               Cancel
             </button>
-            <Button type="submit" loading={loading} className="flex-1" size="lg">
+            <Button
+              type="submit"
+              loading={loading}
+              size="lg"
+              className="flex-1 !rounded-full !bg-[#00FF66] !text-black !font-[Outfit] !font-bold hover:!bg-[#00FF66] hover:brightness-110"
+            >
               Register &amp; Continue →
             </Button>
           </div>

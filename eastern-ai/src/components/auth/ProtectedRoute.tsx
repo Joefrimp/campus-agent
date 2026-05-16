@@ -18,7 +18,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   }
 
   if (!session) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/signin" replace />
   }
 
   // Profile not yet completed → go to onboarding
@@ -43,6 +43,6 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 export function AuthRoute({ children }: ProtectedRouteProps) {
   const { session, loading } = useAuth()
   if (loading) return <FullPageSpinner />
-  if (!session) return <Navigate to="/" replace />
+  if (!session) return <Navigate to="/signin" replace />
   return <>{children}</>
 }
