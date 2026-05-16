@@ -1,0 +1,23 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="leftGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2a759e" />
+      <stop offset="100%" stop-color="#0e3f68" />
+    </linearGradient>
+    <linearGradient id="rightGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#4cc9f0" />
+      <stop offset="100%" stop-color="#3f8ebf" />
+    </linearGradient>
+  </defs>
+  <!-- Placeholder V logo to match the user's uploaded logo -->
+  <!-- Left Wing -->
+  <path d="M 100,120 L 256,420 L 220,150 Z" fill="url(#leftGrad)" />
+  <!-- Right Wing -->
+  <path d="M 412,120 L 256,420 L 292,150 Z" fill="url(#rightGrad)" />
+  
+  <!-- Center Circuitry decoration -->
+  <circle cx="256" cy="250" r="12" fill="#4cc9f0" />
+  <circle cx="230" cy="200" r="8" fill="#4cc9f0" />
+  <circle cx="282" cy="180" r="10" fill="#4cc9f0" />
+  <path d="M 256,250 L 256,380 M 256,250 L 230,200 M 256,250 L 282,180" stroke="#4cc9f0" stroke-width="4" fill="none" />
+</svg>

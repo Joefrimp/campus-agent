@@ -88,6 +88,75 @@
   .scrollbar-none::-webkit-scrollbar { display: none; }
   .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
 
+  /* ── Animations ─────────────────────────────────────────── */
+  @keyframes float-slow {
+    0%, 100% { transform: translateY(0px); }
+    50%      { transform: translateY(-12px); }
+  }
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 0.55; transform: scale(1); }
+    50%      { opacity: 0.85; transform: scale(1.06); }
+  }
+  @keyframes shimmer {
+    0%   { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  @keyframes drift {
+    0%   { transform: translate(0, 0); }
+    33%  { transform: translate(30px, -40px); }
+    66%  { transform: translate(-20px, 20px); }
+    100% { transform: translate(0, 0); }
+  }
+  @keyframes fade-up {
+    0%   { opacity: 0; transform: translateY(24px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes typewriter-cursor {
+    0%, 49%   { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+  @keyframes star-twinkle {
+    0%, 100% { opacity: 0.2; }
+    50%      { opacity: 1; }
+  }
+
+  .animate-float-slow  { animation: float-slow 6s ease-in-out infinite; }
+  .animate-pulse-glow  { animation: pulse-glow 4s ease-in-out infinite; }
+  .animate-drift-slow  { animation: drift 18s ease-in-out infinite; }
+  .animate-drift-fast  { animation: drift 12s ease-in-out infinite reverse; }
+  .animate-fade-up     { animation: fade-up 0.7s ease-out both; }
+  .animate-blink       { animation: typewriter-cursor 1s step-end infinite; }
+  .animate-twinkle     { animation: star-twinkle 3s ease-in-out infinite; }
+
+  /* Reveal-on-scroll classes set by useScrollReveal */
+  .reveal-init { opacity: 0; transform: translateY(30px); }
+  .reveal-in   { animation: fade-up 0.8s ease-out forwards; }
+
+  /* Shimmer text gradient (for accent words in headlines) */
+  .text-gradient {
+    background: linear-gradient(110deg, var(--color-accent) 0%, #c084fc 40%, #f472b6 70%, var(--color-accent) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: shimmer 6s linear infinite;
+  }
+
+  /* Glowing button */
+  .btn-glow {
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-glow::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,0.25) 50%, transparent 70%);
+    background-size: 200% 100%;
+    animation: shimmer 3s linear infinite;
+    pointer-events: none;
+  }
+
   .glass {
     background: var(--color-glass-bg);
     backdrop-filter: blur(14px) saturate(140%);
