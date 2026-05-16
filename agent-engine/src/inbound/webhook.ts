@@ -55,7 +55,7 @@ async function processMessage(msg: Msg, channel_id?: string): Promise<void> {
 
   const isVoice = msg.type === 'voice' || msg.type === 'audio' || !!msg.voice || !!msg.audio;
   const isImage = msg.type === 'image' || !!msg.image;
-  const body = msg.text?.body ?? msg.image?.caption ?? '';
+  let body = msg.text?.body ?? msg.image?.caption ?? '';
   if (!isVoice && !isImage && !body) return;
 
   // ─── Owner's own outbound (from_me) — observe quietly, do NOT reply.
@@ -209,7 +209,62 @@ async function processMessage(msg: Msg, channel_id?: string): Promise<void> {
       owner_phone: profile.phone,
     });
     if (paymentResult.handled) return;
-    // Not a payment screenshot — if there's no caption, just acknowledge briefly.
+
+    // Not a payment screenshot — try the catalogue image matcher next.
+    // Use case: customer forwards a product photo (often from a competitor
+    // WhatsApp group) and asks "do you have this?". Matcher returns exact
+    // (>=0.85), similar (>=0.60), or none. We reply directly on exact;
+    // append match context to body on similar+caption so brain can riff
+    // honestly; fall through to acknowledge on no-caption no-match.
+    const imageBytes = await downloadWhapiMedia(tenant_id, msg);
+    const match = imageBytes ? await matchForwardedImage(tenant_id, imageBytes) : null;
+    const matchReply =
+      match && match.ok && (match.band === 'exact' || match.band === 'similar')
+        ? formatMatchReply(match, profile.business_name)
+        : null;
+
+    if (matchReply && match?.band === 'exact' && !body) {
+      // Strong match, no caption — answer directly and log as agent reply.
+      const sent = await send({
+        user_id: tenant_id,
+        to: from,
+        message: matchReply,
+        type: 'text',
+        idempotency_key: sha256(`img-match|${msg.id}`),
+      });
+      await Promise.allSettled([
+        supabase.from('conversation_memory').insert({
+          user_id: tenant_id,
+          customer_phone: from,
+          role: 'assistant',
+          content: matchReply,
+        }),
+        supabase.from('agent_logs').insert({
+          user_id: tenant_id,
+          contact_phone: from,
+          inbound_message: '[forwarded product image]',
+          ai_response: matchReply,
+          brand_voice: profile.brand_voice,
+          was_overridden: false,
+        }),
+        supabase.rpc('increment_message_count', { p_user_id: tenant_id }),
+        audit({
+          user_id: tenant_id,
+          workflow: 'W1-image-match-exact',
+          input: { confidence: match.best_confidence, fingerprint: match.fingerprint },
+          output: { reply: matchReply, send: sent },
+        }),
+      ]);
+      return;
+    }
+
+    if (matchReply && body) {
+      // Has caption — fold the match result into the body so brain replies
+      // honestly with the catalogue evidence (no hallucinated matches).
+      body = `${body}\n\n[image_analysis: ${matchReply}]`;
+    }
+
+    // No caption + no match (or non-product image) — keep the existing ack.
     if (!body) {
       await send({
         user_id: tenant_id,
@@ -220,7 +275,7 @@ async function processMessage(msg: Msg, channel_id?: string): Promise<void> {
       });
       return;
     }
-    // Has caption — fall through to normal text flow with the caption as body.
+    // Fall through to normal text flow with body (possibly enriched).
   }
 
   // 11. Load settings, then process text body
@@ -677,4 +732,34 @@ async function bumpErrorCounter(user_id: string): Promise<void> {
 
 function normalizePhone(p: string): string {
   return p.replace(/[^\d]/g, '');
+}
+
+/**
+ * Download an inbound Whapi media attachment as raw bytes. Returns null on
+ * any failure (missing channel token, missing media id, network error,
+ * timeout). Used by the image-matcher branch — payment.ts has its own copy
+ * because that pipeline pre-dates this helper.
+ */
+async function downloadWhapiMedia(user_id: string, msg: Msg): Promise<Uint8Array | null> {
+  const image = msg.image as { id?: string } | undefined;
+  const mediaId = image?.id;
+  if (!mediaId) return null;
+
+  const { data: channel } = await supabase
+    .from('whapi_channels')
+    .select('token')
+    .eq('user_id', user_id)
+    .maybeSingle();
+  if (!channel?.token) return null;
+
+  try {
+    const res = await fetch(`${config.WHAPI_BASE_URL}/media/${mediaId}`, {
+      headers: { Authorization: `Bearer ${channel.token}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    return new Uint8Array(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
 }
