@@ -14,6 +14,8 @@ import { runDLQ } from './dlq-processor.js';
 import { runDeliveryBatch } from '../owner-commands/delivery.js';
 import { runWeeklyEmailDigest } from './weekly-email-digest.js';
 import { sweepExpiredActivations } from '../billing/activation.js';
+import { runStyleLearning } from './style-learning.js';
+import { runCustomerPreferences } from './customer-preferences.js';
 
 export function startScheduler(): void {
   logger.info('starting internal scheduler');
@@ -45,7 +47,15 @@ export function startScheduler(): void {
     }),
   );
 
-  logger.info('scheduler running: W7 (30m), W8 (hourly), W10 (5m), W12 (15m), delivery (hourly), weekly-email (Fri 19:30 local), billing-sweep (5m)');
+  // Weekly style learning — Sunday 02:00 UTC. Synthesises
+  // business_settings.learned_style_summary from owner_messages + agent_logs.
+  cron.schedule('0 2 * * 0', () => safe('style-learning', runStyleLearning));
+
+  // Daily customer-preferences extraction — 03:00 UTC. Cheap Flash-Lite,
+  // populates customers.preferences for personalised replies.
+  cron.schedule('0 3 * * *', () => safe('customer-preferences', runCustomerPreferences));
+
+  logger.info('scheduler running: W7 (30m), W8 (hourly), W10 (5m), W12 (15m), delivery (hourly), weekly-email (Fri 19:30 local), billing-sweep (5m), style-learning (Sun 02:00 UTC), customer-preferences (daily 03:00 UTC)');
 }
 
 async function safe(name: string, fn: () => Promise<void>): Promise<void> {

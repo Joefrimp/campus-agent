@@ -208,14 +208,51 @@ ${args.draft_only ? '\n# DRAFT MODE\nThis reply will be reviewed by the owner be
 function buildPersonalization(args: BrainArgs): string {
   const guide = (args.settings.tenant_style_guide ?? '').trim();
   const learned = (args.settings.learned_style_summary ?? '').trim();
-  if (!guide && !learned) return '';
-  const parts: string[] = ['\n\n# OWNER\'S PERSONAL STYLE GUIDE'];
-  parts.push(
-    'These instructions describe how the owner personally wants you to sound. They override the generic brand voice tone where they conflict, but they NEVER override safety, pricing, or escalation rules.',
-  );
-  if (guide) parts.push(`\n## Owner-authored:\n${guide}`);
-  if (learned) parts.push(`\n## Learned from owner's past messages:\n${learned}`);
+  const customerPrefs = buildCustomerProfile(args.customer);
+  if (!guide && !learned && !customerPrefs) return '';
+  const parts: string[] = [];
+  if (guide || learned) {
+    parts.push('\n\n# OWNER\'S PERSONAL STYLE GUIDE');
+    parts.push(
+      'These instructions describe how the owner personally wants you to sound. They override the generic brand voice tone where they conflict, but they NEVER override safety, pricing, or escalation rules.',
+    );
+    if (guide) parts.push(`\n## Owner-authored:\n${guide}`);
+    if (learned) parts.push(`\n## Learned from owner's past messages:\n${learned}`);
+  }
+  if (customerPrefs) {
+    parts.push('\n\n# WHAT YOU KNOW ABOUT THIS CUSTOMER');
+    parts.push(
+      'Use this profile to personalise — e.g. confirm their usual delivery point without asking, suggest their favourites, match their language. NEVER repeat the profile back to them verbatim; just act on it.',
+    );
+    parts.push(customerPrefs);
+  }
   return parts.join('\n');
+}
+
+function buildCustomerProfile(c: Customer): string {
+  // Customer.preferences is added by migration 012 and populated by the
+  // daily customer-preferences cron. Defaults to empty object when absent
+  // (older customers / fresh signups).
+  const prefs = (c as Customer & { preferences?: Record<string, unknown> }).preferences;
+  if (!prefs || Object.keys(prefs).length === 0) return '';
+  const bits: string[] = [];
+  if (typeof prefs.address_label === 'string' && prefs.address_label)
+    bits.push(`- Usually collects at: ${prefs.address_label}`);
+  if (typeof prefs.payment_pattern === 'string' && prefs.payment_pattern)
+    bits.push(`- Payment pattern: ${prefs.payment_pattern}`);
+  if (typeof prefs.tone_preference === 'string' && prefs.tone_preference)
+    bits.push(`- Prefers tone: ${prefs.tone_preference}`);
+  if (Array.isArray(prefs.favourites) && prefs.favourites.length > 0)
+    bits.push(`- Favourites: ${prefs.favourites.slice(0, 5).join(', ')}`);
+  if (Array.isArray(prefs.no_go) && prefs.no_go.length > 0)
+    bits.push(`- Avoid: ${prefs.no_go.slice(0, 5).join(', ')}`);
+  if (typeof prefs.loyalty_signals === 'string' && prefs.loyalty_signals)
+    bits.push(`- Loyalty: ${prefs.loyalty_signals}`);
+  if (typeof prefs.language === 'string' && prefs.language)
+    bits.push(`- Language: ${prefs.language}`);
+  if (typeof prefs.notes === 'string' && prefs.notes)
+    bits.push(`- Notes: ${prefs.notes}`);
+  return bits.length > 0 ? bits.join('\n') : '';
 }
 
 async function loadMemory(
