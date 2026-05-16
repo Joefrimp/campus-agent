@@ -35,6 +35,12 @@ import {
   handleActivationWebhook,
   handleManualGrantPro,
 } from './webhooks/billing.js';
+import {
+  handleScraperStart,
+  handleScraperRuns,
+  handleScraperImports,
+  handleScraperDecision,
+} from './webhooks/scraper.js';
 import { startScheduler } from './scheduler/index.js';
 
 const app = new Hono();
@@ -93,6 +99,14 @@ app.use('/billing/cancel-upgrade', sharedSecretAuth);
 app.post('/billing/start-upgrade', handleStartUpgrade);
 app.get('/billing/activation-status', handleActivationStatus);
 app.post('/billing/cancel-upgrade', handleCancelUpgrade);
+app.use('/scraper/start', sharedSecretAuth);
+app.use('/scraper/runs', sharedSecretAuth);
+app.use('/scraper/imports', sharedSecretAuth);
+app.use('/scraper/imports/decision', sharedSecretAuth);
+app.post('/scraper/start', handleScraperStart);
+app.get('/scraper/runs', handleScraperRuns);
+app.get('/scraper/imports', handleScraperImports);
+app.post('/scraper/imports/decision', handleScraperDecision);
 
 // --- Admin (HMAC-signed) ---
 app.post('/admin/replay', handleAdminReplay);

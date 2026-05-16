@@ -117,6 +117,71 @@ export function cancelProUpgrade(userId: string, code: string) {
   return post<{ success: boolean }>('/billing/cancel-upgrade', { user_id: userId, code })
 }
 
+/* ─── Website catalogue importer ─── */
+
+export interface ScraperRun {
+  id: string
+  source_url: string
+  status: 'queued' | 'crawling' | 'enriching' | 'ready_for_review' | 'completed' | 'failed'
+  total_found: number
+  approved_count: number
+  rejected_count: number
+  error_message: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+export interface PendingImport {
+  id: string
+  name: string
+  description: string | null
+  price: number | null
+  currency: string | null
+  image_url: string | null
+  category: string | null
+  source_url: string | null
+  state: 'pending' | 'approved' | 'rejected' | 'imported'
+  created_at: string
+}
+
+export function startScraperRun(userId: string, sourceUrl: string) {
+  return post<{ success: boolean; run_id?: string; error?: string }>(
+    '/scraper/start',
+    { user_id: userId, source_url: sourceUrl },
+  )
+}
+
+export async function getScraperRuns(userId: string): Promise<ScraperRun[]> {
+  const res = await fetch(`${BASE}/scraper/runs?user_id=${encodeURIComponent(userId)}`, {
+    headers: { 'X-Eastern-AI-Secret': SECRET || '' },
+  })
+  if (!res.ok) throw new Error(`scraper/runs ${res.status}`)
+  const j = (await res.json()) as { success: boolean; runs: ScraperRun[] }
+  return j.runs
+}
+
+export async function getPendingImports(userId: string, runId?: string): Promise<PendingImport[]> {
+  const q = runId ? `&run_id=${encodeURIComponent(runId)}` : ''
+  const res = await fetch(
+    `${BASE}/scraper/imports?user_id=${encodeURIComponent(userId)}${q}`,
+    { headers: { 'X-Eastern-AI-Secret': SECRET || '' } },
+  )
+  if (!res.ok) throw new Error(`scraper/imports ${res.status}`)
+  const j = (await res.json()) as { success: boolean; imports: PendingImport[] }
+  return j.imports
+}
+
+export function decideImports(
+  userId: string,
+  action: 'approve' | 'reject',
+  opts: { ids?: string[]; run_id?: string; scope?: 'ids' | 'all_pending' },
+) {
+  return post<{ success: boolean; processed: number }>(
+    '/scraper/imports/decision',
+    { user_id: userId, action, ...opts },
+  )
+}
+
 export interface PairPhoneResponse {
   success: boolean
   code?: string

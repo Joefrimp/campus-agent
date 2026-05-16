@@ -10,6 +10,7 @@ import { SetupPage } from './pages/SetupPage'
 import { SalesPage } from './pages/SalesPage'
 import { AgentLogsPage } from './pages/AgentLogsPage'
 import { CataloguePage } from './pages/CataloguePage'
+import { ImportCataloguePage } from './pages/ImportCataloguePage'
 import { OrdersPage } from './pages/OrdersPage'
 import { FinancesPage } from './pages/FinancesPage'
 import { HelpCenterPage } from './pages/HelpCenterPage'
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="sales" element={<SalesPage />} />
           <Route path="logs" element={<AgentLogsPage />} />
           <Route path="catalogue" element={<CataloguePage />} />
+          <Route path="catalogue/import" element={<ImportCataloguePage />} />
           <Route path="orders" element={<OrdersPage />} />
           <Route path="finances" element={<FinancesPage />} />
           <Route path="help" element={<HelpCenterPage />} />
