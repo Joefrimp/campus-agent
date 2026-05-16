@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { Bot, Calendar, TrendingUp, Smile, Paperclip, Mic, Check, Play } from 'lucide-react';
+import { Bot, TrendingUp, Smile, Paperclip, Mic, Check, Play } from 'lucide-react';
 
 export const SceneSneakerHub = () => (
   <motion.div
