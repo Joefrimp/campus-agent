@@ -22,6 +22,7 @@ import { send } from '../outbound/send.js';
 import { audit } from '../lib/audit.js';
 import { logger } from '../lib/logger.js';
 import { config } from '../config.js';
+import { tryActivateFromScreenshot } from '../billing/activation.js';
 import type { WhapiInbound } from '../types.js';
 
 type Msg = NonNullable<WhapiInbound['messages']>[number];
@@ -30,13 +31,16 @@ const ExtractionSchema = z.object({
   is_payment_screenshot: z.boolean(),
   amount: z.number().nullable(),
   reference: z.string().nullable(),
+  txn_id: z.string().nullable(),
   sender_name: z.string().nullable(),
   network: z.enum(['MTN', 'Vodafone', 'AirtelTigo', 'Bank', 'Other', 'Unknown']).nullable(),
   recipient_visible: z.string().nullable(),
   confidence: z.number().min(0).max(1),
 });
 
-const EXTRACT_PROMPT = `Analyze this image. If it is a Ghanaian Mobile Money (MoMo) confirmation screenshot, bank transfer receipt, or any payment proof, extract: amount in GHS (number only), transaction reference, sender name, network (MTN/Vodafone/AirtelTigo/Bank). If it is NOT a payment screenshot (just a product photo, selfie, meme, etc.), set is_payment_screenshot=false and leave other fields null. Be strict — only mark true if you clearly see "Sent", "Transfer", "Payment", "Successful", a transaction ID, or similar payment indicators.`;
+const EXTRACT_PROMPT = `Analyze this image. If it is a Ghanaian Mobile Money (MoMo) confirmation screenshot, bank transfer receipt, or any payment proof, extract: amount in GHS (number only), transaction reference (free text — may contain codes like "VEC-XXXX-XXXX"), txn_id (the transaction ID assigned by the network), sender name, network (MTN/Vodafone/AirtelTigo/Bank), recipient_visible (phone number or name shown as recipient). If it is NOT a payment screenshot (just a product photo, selfie, meme, etc.), set is_payment_screenshot=false and leave other fields null. Be strict — only mark true if you clearly see "Sent", "Transfer", "Payment", "Successful", a transaction ID, or similar payment indicators.`;
+
+const ACTIVATION_CODE_RE = /VEC-[A-Z2-9]{4}-[A-Z2-9]{4}/i;
 
 interface IngestArgs {
   msg: Msg;
@@ -91,6 +95,45 @@ export async function ingestPaymentImage(args: IngestArgs): Promise<{ handled: b
   if (!extraction.is_payment_screenshot || extraction.confidence < 0.6) {
     // Not a payment image — let the normal text flow handle it (or skip).
     return { handled: false };
+  }
+
+  // ─── Pro activation short-circuit ─────────────────────────────────
+  // If the OCR'd reference contains a VEC-XXXX-XXXX activation code, this
+  // is a Pro upgrade payment (not an order payment). Route to the activation
+  // matcher and reply directly to the sender — do NOT escalate to the
+  // tenant owner (they aren't part of this transaction).
+  //
+  // This lets the same Whapi channel/number that's used for the tenant's
+  // own customer messages ALSO receive Pro-upgrade screenshots, so users
+  // don't have to provision a second WhatsApp line.
+  const refText = `${extraction.reference ?? ''} ${args.msg.text?.body ?? args.msg.image?.caption ?? ''}`;
+  if (ACTIVATION_CODE_RE.test(refText)) {
+    const outcome = await tryActivateFromScreenshot({
+      amount: extraction.amount,
+      reference: refText,
+      recipient_visible: extraction.recipient_visible,
+      txn_id: extraction.txn_id,
+      network: extraction.network,
+      raw: extraction,
+    });
+    const reply = outcome.matched
+      ? `✅ Pro activated! Welcome to Vector Pro.\n\nCode: ${outcome.code}\nThank you for upgrading 🚀`
+      : explainActivationRejection(outcome.reason);
+    await send({
+      user_id: args.user_id,
+      to: args.customer_phone,
+      message: reply,
+      type: 'text',
+      force: true,
+      idempotency_key: `pro-activation-reply-${args.msg.id}`,
+    });
+    await audit({
+      user_id: args.user_id,
+      workflow: outcome.matched ? 'pro-activation-matched' : 'pro-activation-rejected',
+      input: { extraction, from: args.customer_phone },
+      output: { outcome },
+    });
+    return { handled: true };
   }
 
   // 3. Find candidate open orders (best fuzzy match by amount, no auto-confirm).
@@ -211,5 +254,27 @@ async function downloadMedia(token: string, mediaId: string): Promise<Uint8Array
     return new Uint8Array(await res.arrayBuffer());
   } catch {
     return null;
+  }
+}
+
+function explainActivationRejection(reason?: string): string {
+  switch (reason) {
+    case 'no_amount':
+      return "Couldn't read the amount on your screenshot. Re-send a clearer one.";
+    case 'wrong_recipient':
+      return "The recipient on this screenshot doesn't match our MoMo number. Did you send to the right number?";
+    case 'no_code':
+      return "We couldn't find a VEC-XXXX-XXXX activation code in the reference. Make sure you used the exact code shown on your dashboard as the MoMo reference.";
+    case 'unknown_code':
+      return "That activation code isn't recognised. Generate a new one in your dashboard and try again.";
+    case 'expired':
+      return 'That activation code expired. Click "Go Pro" in your dashboard to get a fresh one.';
+    case 'underpaid':
+      return 'The amount paid is less than the Pro price. Top up the difference and re-forward the new screenshot.';
+    case 'replay':
+    case 'paid':
+      return 'This payment screenshot has already been used to activate Pro.';
+    default:
+      return "Couldn't activate from this screenshot. Contact support: hello@eastern.ai";
   }
 }
