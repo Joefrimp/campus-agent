@@ -74,6 +74,27 @@ app.get('/health', handleHealth);
 app.get('/', (c) => c.text('agent-engine — running'));
 app.get('/config/pro-payment', handleProPaymentConfig);
 
+/**
+ * Debug — auth-check.
+ * Returns a diagnostic comparison of the X-Eastern-AI-Secret header that
+ * the frontend sent vs the AGENT_ENGINE_SECRET env var the backend has.
+ * Only exposes lengths and a 4-char fingerprint of each end, never the
+ * full strings — safe to call from anywhere. Useful for diagnosing 401s
+ * without leaking the secret. Remove once the mismatch is resolved.
+ */
+app.get('/debug/auth-check', (c) => {
+  const provided = c.req.header('x-eastern-ai-secret') ?? '';
+  const expected = config.AGENT_ENGINE_SECRET ?? '';
+  const fp = (s: string) =>
+    s.length === 0 ? '(empty)' : `${s.slice(0, 4)}…${s.slice(-4)} (len ${s.length})`;
+  return c.json({
+    provided_header_fingerprint: fp(provided),
+    backend_env_fingerprint: fp(expected),
+    match: provided === expected,
+    cors_origin_received: c.req.header('origin') ?? '(none)',
+  });
+});
+
 // --- Whapi → us (no shared secret; Whapi doesn't sign requests) ---
 app.post('/whapi/inbound', handleInboundWebhook);
 app.post('/whapi/channel-status', handleChannelStatus);
