@@ -128,6 +128,14 @@ export interface ScraperPageDiagnostic {
   skip_reason: string | null
 }
 
+export interface ScraperTrailStep {
+  at: string
+  phase: 'plan' | 'execute' | 'validate' | 'pivot' | 'done' | 'fail'
+  title: string
+  detail: string
+  evidence?: Record<string, unknown>
+}
+
 export interface ScraperRun {
   id: string
   source_url: string
@@ -142,6 +150,8 @@ export interface ScraperRun {
   pages_with_products?: number
   diagnostics?: ScraperPageDiagnostic[] | null
   hint?: string | null
+  current_step?: string | null
+  reasoning_trail?: ScraperTrailStep[] | null
 }
 
 export interface PendingImport {

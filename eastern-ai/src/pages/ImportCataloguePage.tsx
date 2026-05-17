@@ -7,7 +7,10 @@
  */
 import { useEffect, useState } from 'react'
 import { motion } from 'motion/react'
-import { Globe, Loader2, Check, X, RefreshCw, ArrowRight, Tag, AlertCircle } from 'lucide-react'
+import {
+  Globe, Loader2, Check, X, RefreshCw, ArrowRight, Tag, AlertCircle,
+  Brain, Cog, ShieldCheck, GitBranch, Sparkles, AlertTriangle,
+} from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import {
   startScraperRun,
@@ -16,6 +19,7 @@ import {
   decideImports,
   type ScraperRun,
   type PendingImport,
+  type ScraperTrailStep,
 } from '../lib/webhooks'
 
 export function ImportCataloguePage() {
@@ -49,12 +53,13 @@ export function ImportCataloguePage() {
   useEffect(() => { refreshRuns() }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { refreshImports() }, [activeRunId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll while active run is in progress
+  // Poll while active run is in progress — fast cadence so the
+  // reasoning trail feels live.
   useEffect(() => {
     const active = runs.find(r => r.id === activeRunId)
     if (!active) return
     if (active.status === 'ready_for_review' || active.status === 'completed' || active.status === 'failed') return
-    const t = setInterval(() => { refreshRuns(); refreshImports() }, 4000)
+    const t = setInterval(() => { refreshRuns(); refreshImports() }, 1500)
     return () => clearInterval(t)
   }, [runs, activeRunId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -191,6 +196,11 @@ export function ImportCataloguePage() {
 
       {/* Active run status */}
       {activeRun && <RunStatusCard run={activeRun} />}
+
+      {/* Live reasoning trail — shows the agent's thinking as it runs */}
+      {activeRun && (activeRun.reasoning_trail?.length ?? 0) > 0 && (
+        <ReasoningTrail run={activeRun} />
+      )}
 
       {/* Imports table */}
       {imports.length > 0 && (
@@ -448,4 +458,91 @@ function ImportCard({
       </div>
     </motion.div>
   )
+}
+
+/* ─── Reasoning trail (live agent timeline) ─── */
+
+function ReasoningTrail({ run }: { run: ScraperRun }) {
+  const trail = run.reasoning_trail ?? []
+  const inProgress =
+    run.status === 'queued' || run.status === 'crawling' || run.status === 'enriching'
+  return (
+    <section className="mt-6 rounded-2xl bg-[#0A0A0A] border border-[rgba(255,255,255,0.1)] overflow-hidden">
+      <div className="px-5 py-4 border-b border-[rgba(255,255,255,0.05)] flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <Brain className="w-4 h-4 text-vector-primary" />
+          <h3 className="font-[Outfit] font-bold text-white text-sm">Agent reasoning</h3>
+          {inProgress && (
+            <span className="ml-2 inline-flex items-center gap-1.5 text-[10px] text-vector-primary font-medium uppercase tracking-widest">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inset-0 rounded-full bg-vector-primary animate-ping opacity-60" />
+                <span className="relative h-1.5 w-1.5 rounded-full bg-vector-primary" />
+              </span>
+              live
+            </span>
+          )}
+        </div>
+        <span className="text-[11px] text-zinc-500 font-mono">{trail.length} step{trail.length === 1 ? '' : 's'}</span>
+      </div>
+      <ol className="px-5 py-4 space-y-3">
+        {trail.map((step, i) => (
+          <TrailEntry key={i} step={step} last={i === trail.length - 1 && inProgress} />
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+function TrailEntry({ step, last }: { step: ScraperTrailStep; last: boolean }) {
+  const { icon, color } = phaseStyle(step.phase)
+  const time = formatTime(step.at)
+  return (
+    <li className="flex gap-3">
+      <div className="flex flex-col items-center shrink-0">
+        <div className={`w-7 h-7 rounded-full flex items-center justify-center border ${color}`}>
+          {last ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : icon}
+        </div>
+        <div className="flex-1 w-px bg-[rgba(255,255,255,0.08)] mt-1 mb-0" />
+      </div>
+      <div className="flex-1 min-w-0 pb-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="font-[Inter] font-semibold text-white text-sm leading-snug">{step.title}</span>
+          <span className="text-[10px] text-zinc-500 font-mono shrink-0">{time}</span>
+        </div>
+        {step.detail && (
+          <p className="text-xs text-zinc-400 leading-relaxed mt-1 whitespace-pre-line break-words">{step.detail}</p>
+        )}
+        {step.evidence && Object.keys(step.evidence).length > 0 && (
+          <details className="mt-2 group">
+            <summary className="cursor-pointer text-[10px] font-mono text-zinc-500 uppercase tracking-widest hover:text-zinc-300 inline-flex items-center gap-1">
+              evidence <span className="group-open:rotate-90 transition-transform">›</span>
+            </summary>
+            <pre className="mt-2 p-2.5 rounded-md bg-black/40 text-[10px] text-zinc-400 font-mono overflow-x-auto max-h-40 leading-snug">
+              {JSON.stringify(step.evidence, null, 2)}
+            </pre>
+          </details>
+        )}
+      </div>
+    </li>
+  )
+}
+
+function phaseStyle(phase: ScraperTrailStep['phase']): { icon: React.ReactNode; color: string } {
+  switch (phase) {
+    case 'plan':     return { icon: <Brain className="w-3.5 h-3.5 text-blue-300" />,        color: 'bg-blue-500/10 border-blue-500/40' }
+    case 'execute':  return { icon: <Cog className="w-3.5 h-3.5 text-zinc-200" />,           color: 'bg-zinc-500/10 border-zinc-400/40' }
+    case 'validate': return { icon: <ShieldCheck className="w-3.5 h-3.5 text-fuchsia-300" />, color: 'bg-fuchsia-500/10 border-fuchsia-500/40' }
+    case 'pivot':    return { icon: <GitBranch className="w-3.5 h-3.5 text-amber-300" />,    color: 'bg-amber-500/10 border-amber-500/40' }
+    case 'done':     return { icon: <Sparkles className="w-3.5 h-3.5 text-vector-primary" />, color: 'bg-vector-primary/10 border-vector-primary/40' }
+    case 'fail':     return { icon: <AlertTriangle className="w-3.5 h-3.5 text-[#F87171]" />, color: 'bg-[#F87171]/10 border-[#F87171]/40' }
+  }
+}
+
+function formatTime(iso: string): string {
+  try {
+    const d = new Date(iso)
+    return d.toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  } catch {
+    return ''
+  }
 }

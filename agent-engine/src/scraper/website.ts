@@ -1,206 +1,43 @@
 /**
- * Website catalogue scraper.
+ * HTML extraction helpers + the public runScraperJob entrypoint.
  *
- * Heuristic-first pipeline (cheerio static HTML only — no headless browser,
- * so SPAs that render entirely via JS won't yield results yet, but most
- * Shopify / Wix / WooCommerce / generic catalog sites do server-render
- * enough to extract a useful first pass).
+ * The agentic loop in agentic.ts orchestrates planning, validation, and
+ * the reasoning trail. This module owns the low-level primitives:
+ *   - fetchHtmlWithStatus(url): bytes + HTTP status
+ *   - discoverProductPages(rootUrl): heuristic URL discovery
+ *   - extractFromHtml(url): try JSON-LD → OpenGraph → CSS heuristic
  *
- * Detection strategy in order:
- *   1. JSON-LD <script type="application/ld+json"> blocks of type Product
- *      or ProductGroup. Schema.org is the gold standard — when present we
- *      use the data verbatim.
- *   2. OpenGraph product meta tags (og:title, og:image, product:price:amount).
- *   3. Generic CSS heuristics — look for repeated card-like elements whose
- *      child structure contains an image + text node with a currency-shaped
- *      string. (Last resort; may over-collect.)
- *
- * Gemini Vision enrichment runs ONLY for items whose extracted description
- * is shorter than 40 chars — keeps cost predictable.
+ * Gemini Vision enrichment for thin descriptions still lives here.
  */
 import * as cheerio from 'cheerio';
 import { generateObject } from 'ai';
 import { z } from 'zod';
-import { supabase } from '../lib/supabase.js';
 import { models } from '../lib/gemini.js';
-import { logger } from '../lib/logger.js';
-import { tryPlatformApi } from './platform-api.js';
+import { runAgenticScrape } from './agentic.js';
+import type { ExtractedProduct } from './platform-api.js';
 
 const CURRENCY_RE = /(?:GH[¢₵]|GHS|₵|\$|€|£|₦|R)?\s?(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/i;
-const MAX_PAGES = 6;
+const MAX_PAGES = 8;
 const REQUEST_TIMEOUT_MS = 12_000;
 const USER_AGENT = 'EasternAI-Vector-Scraper/1.0 (+https://eastern.ai)';
 
-interface ExtractedProduct {
-  name: string;
-  description: string | null;
-  price: number | null;
-  currency: string | null;
-  image_url: string | null;
-  source_url: string;
-  category: string | null;
-  raw: unknown;
-}
-
-interface PageDiagnostic {
-  url: string;
-  status_code: number | null;
-  html_kb: number;
-  method_tried: 'jsonld' | 'og' | 'css' | 'none';
-  products_found: number;
-  skip_reason: string | null;
-}
+/* ═══════════════════════════════════════════════════════════════
+   PUBLIC ENTRYPOINT — delegates to the agentic loop
+   ═══════════════════════════════════════════════════════════════ */
 
 export async function runScraperJob(run_id: string, user_id: string, source_url: string): Promise<void> {
-  try {
-    await supabase.from('scraper_runs').update({ status: 'crawling' }).eq('id', run_id);
-
-    const seen = new Set<string>();
-    const products: ExtractedProduct[] = [];
-    const diagnostics: PageDiagnostic[] = [];
-    let pagesWithProducts = 0;
-
-    // 0. Platform API probe — Shopify, Bagisto, WooCommerce expose JSON
-    //    catalogues that bypass the SPA-rendering problem entirely. Try
-    //    these first; if any hits, we're done before touching cheerio.
-    const apiResult = await tryPlatformApi(source_url);
-    if (apiResult.products.length > 0) {
-      logger.info(
-        { run_id, platform: apiResult.platform, products: apiResult.products.length },
-        'scraper: platform API hit',
-      );
-      for (const p of apiResult.products) {
-        const key = (p.name + '|' + (p.image_url ?? '')).toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        products.push(p);
-      }
-      diagnostics.push({
-        url: apiResult.endpoint_hit ?? '(api)',
-        status_code: 200,
-        html_kb: 0,
-        method_tried: 'jsonld',
-        products_found: apiResult.products.length,
-        skip_reason: null,
-      });
-      pagesWithProducts = 1;
-    } else {
-      // Record the API attempts as diagnostics so the user knows we tried.
-      for (const ep of apiResult.endpoint_tried) {
-        diagnostics.push({
-          url: ep,
-          status_code: null,
-          html_kb: 0,
-          method_tried: 'none',
-          products_found: 0,
-          skip_reason: 'platform API not exposed',
-        });
-      }
-    }
-
-    // 1. HTML fallback (Shopify themes that don't expose products.json,
-    //    sites with JSON-LD, OpenGraph product pages, server-rendered cards).
-    const pagesToVisit = products.length === 0 ? await discoverProductPages(source_url) : [];
-    if (pagesToVisit.length > 0) {
-      logger.info({ run_id, pages: pagesToVisit.length, source_url }, 'scraper: discovered pages');
-    }
-
-    for (const url of pagesToVisit) {
-      if (products.length >= 100) break;
-      const result = await extractFromUrlWithDiag(url).catch((err) => {
-        logger.warn({ err, url }, 'scraper: page failed');
-        const fallback: { items: ExtractedProduct[]; diag: PageDiagnostic } = {
-          items: [],
-          diag: {
-            url,
-            status_code: null,
-            html_kb: 0,
-            method_tried: 'none',
-            products_found: 0,
-            skip_reason: `fetch threw: ${(err as Error).message?.slice(0, 100) ?? 'unknown'}`,
-          },
-        };
-        return fallback;
-      });
-      diagnostics.push(result.diag);
-      if (result.items.length > 0) pagesWithProducts++;
-      for (const p of result.items) {
-        const key = (p.name + '|' + (p.image_url ?? '')).toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        products.push(p);
-      }
-    }
-
-    const hint = products.length === 0 ? summariseFailureHint(diagnostics) : null;
-
-    await supabase
-      .from('scraper_runs')
-      .update({
-        status: 'enriching',
-        total_found: products.length,
-        pages_visited: diagnostics.length,
-        pages_with_products: pagesWithProducts,
-        diagnostics: diagnostics as unknown as Record<string, unknown>[],
-        hint,
-      })
-      .eq('id', run_id);
-
-    // Optional Vision enrichment for thin descriptions
-    for (const p of products) {
-      if ((p.description ?? '').trim().length >= 40) continue;
-      if (!p.image_url) continue;
-      try {
-        const enriched = await enrichWithVision(p);
-        if (enriched) p.description = enriched;
-      } catch (err) {
-        logger.warn({ err, name: p.name }, 'scraper: vision enrichment failed');
-      }
-    }
-
-    // Bulk insert
-    if (products.length > 0) {
-      await supabase.from('pending_catalogue_imports').insert(
-        products.map((p) => ({
-          run_id,
-          user_id,
-          source_url: p.source_url,
-          name: p.name.slice(0, 200),
-          description: p.description?.slice(0, 1200) ?? null,
-          price: p.price,
-          currency: p.currency ?? 'GHS',
-          image_url: p.image_url,
-          category: p.category,
-          raw_data: p.raw as Record<string, unknown>,
-        })),
-      );
-    }
-
-    await supabase
-      .from('scraper_runs')
-      .update({ status: 'ready_for_review', finished_at: new Date().toISOString() })
-      .eq('id', run_id);
-  } catch (err) {
-    logger.error({ err, run_id }, 'scraper: run failed');
-    await supabase
-      .from('scraper_runs')
-      .update({
-        status: 'failed',
-        error_message: (err as Error).message?.slice(0, 500) ?? 'unknown',
-        finished_at: new Date().toISOString(),
-      })
-      .eq('id', run_id);
-  }
+  await runAgenticScrape(run_id, user_id, source_url);
 }
 
-/* ─── Page discovery ─── */
+/* ═══════════════════════════════════════════════════════════════
+   PAGE DISCOVERY
+   ═══════════════════════════════════════════════════════════════ */
 
-async function discoverProductPages(rootUrl: string): Promise<string[]> {
+export async function discoverProductPages(rootUrl: string): Promise<string[]> {
   const root = normalizeUrl(rootUrl);
   if (!root) return [];
   const pages = new Set<string>([root]);
 
-  // Common catalog/shop paths
   const common = [
     '/products', '/shop', '/store', '/catalog', '/catalogue',
     '/menu', '/collections', '/services', '/items', '/all-products',
@@ -222,50 +59,43 @@ async function discoverProductPages(rootUrl: string): Promise<string[]> {
         return;
       }
       sameOriginLinks.push(abs);
-      // Strong heuristic — explicit product/catalog vocabulary
       if (/\/(product|item|menu|collection|shop|store|catalog|catalogue|service|cart|order|book|category|categories)/i.test(abs)) {
         pages.add(abs);
       }
     });
-
-    // Fallback: if we still only have the root, follow any same-origin link
-    // (small business sites often use unconventional paths like /our-work,
-    // /pricing, /food, /goods, etc.). Cap aggressively to avoid runaway.
     if (pages.size <= common.length + 1) {
       for (const link of sameOriginLinks.slice(0, 8)) pages.add(link);
     }
   }
-
   return [...pages].slice(0, MAX_PAGES);
 }
 
-/* ─── Per-page extraction (with diagnostics) ─── */
+/* ═══════════════════════════════════════════════════════════════
+   PER-PAGE EXTRACTION
+   ═══════════════════════════════════════════════════════════════ */
 
-async function extractFromUrlWithDiag(
-  url: string,
-): Promise<{ items: ExtractedProduct[]; diag: PageDiagnostic }> {
+export interface HtmlExtractResult {
+  items: ExtractedProduct[];
+  method: 'jsonld' | 'og' | 'css' | 'none';
+  /** Set when items is empty — human-readable reason. */
+  reason: string | null;
+}
+
+export async function extractFromHtml(url: string): Promise<HtmlExtractResult> {
   const { html, statusCode } = await fetchHtmlWithStatus(url);
-  const diag: PageDiagnostic = {
-    url,
-    status_code: statusCode,
-    html_kb: html ? Math.round(html.length / 1024) : 0,
-    method_tried: 'none',
-    products_found: 0,
-    skip_reason: null,
-  };
-
   if (!html) {
-    diag.skip_reason =
-      statusCode === null
-        ? 'request failed (timeout / network / non-HTML response)'
-        : `HTTP ${statusCode}` + (statusCode === 403 || statusCode === 429 ? ' — site is blocking our scraper' : '');
-    return { items: [], diag };
+    return {
+      items: [],
+      method: 'none',
+      reason:
+        statusCode === null
+          ? 'request failed (timeout / network / non-HTML response)'
+          : `HTTP ${statusCode}` + (statusCode === 403 || statusCode === 429 ? ' — site is blocking our scraper' : ''),
+    };
   }
-
   const $ = cheerio.load(html);
 
-  // 1. JSON-LD (schema.org Product)
-  diag.method_tried = 'jsonld';
+  // 1. JSON-LD
   const jsonLd: ExtractedProduct[] = [];
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
@@ -287,83 +117,37 @@ async function extractFromUrlWithDiag(
       }
     } catch {/* malformed JSON-LD, skip */}
   });
-  if (jsonLd.length > 0) {
-    diag.products_found = jsonLd.length;
-    return { items: jsonLd, diag };
-  }
+  if (jsonLd.length > 0) return { items: jsonLd, method: 'jsonld', reason: null };
 
-  // 2. OpenGraph product (single-product pages)
-  diag.method_tried = 'og';
-  const ogProduct = ogToProduct($, url);
-  if (ogProduct) {
-    diag.products_found = 1;
-    return { items: [ogProduct], diag };
-  }
+  // 2. OpenGraph (single product pages)
+  const og = ogToProduct($, url);
+  if (og) return { items: [og], method: 'og', reason: null };
 
   // 3. CSS heuristic — repeated cards
-  diag.method_tried = 'css';
-  const cssProducts = cssHeuristic($, url);
-  if (cssProducts.length > 0) {
-    diag.products_found = cssProducts.length;
-    return { items: cssProducts, diag };
-  }
+  const css = cssHeuristic($, url);
+  if (css.length > 0) return { items: css, method: 'css', reason: null };
 
-  // Nothing matched — diagnose why
-  diag.skip_reason = diagnosePageEmpty($, html);
-  return { items: [], diag };
+  return { items: [], method: 'none', reason: diagnosePageEmpty($) };
 }
 
-/** Try to explain why a page yielded zero products. */
-function diagnosePageEmpty($: cheerio.CheerioAPI, html: string): string {
+function diagnosePageEmpty($: cheerio.CheerioAPI): string {
   const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
   const scriptTags = $('script').length;
   const visibleTextChars = bodyText.length;
-
-  // SPA shell heuristic: lots of script tags, very little visible text
   if (scriptTags >= 5 && visibleTextChars < 500) {
-    return 'page looks like a JavaScript SPA shell — products are rendered client-side, scraper cannot see them';
+    return 'page looks like a JavaScript SPA shell — products are rendered client-side';
   }
-  if (visibleTextChars < 200) {
-    return 'page is nearly empty (less than 200 chars of visible text)';
-  }
+  if (visibleTextChars < 200) return 'page nearly empty';
   if (!/(\$|₵|GH|£|€|N|R|\d+\.\d{2})/.test(bodyText)) {
-    return 'no currency-like prices found anywhere on the page';
+    return 'no currency-like prices found anywhere';
   }
-  if ($('img').length < 3) {
-    return 'fewer than 3 images on the page — not catalogue-shaped';
-  }
-  // Has prices + images but markup didn't match our patterns
-  void html;
-  return 'page has images and prices but markup did not match any of our extractors (JSON-LD, OpenGraph, repeated cards). Try a deeper URL like /shop or /products.';
+  if ($('img').length < 3) return 'fewer than 3 images — not catalogue-shaped';
+  return 'page has images and prices but markup did not match any extractor';
 }
 
-/** Aggregate per-page diagnostics into a single human hint for the dashboard. */
-function summariseFailureHint(diags: PageDiagnostic[]): string {
-  if (diags.length === 0) return 'No pages were crawled — check the URL is correct and publicly reachable.';
-
-  const blocked = diags.filter((d) => d.status_code === 403 || d.status_code === 429).length;
-  const fetchFailed = diags.filter((d) => d.status_code === null).length;
-  const spaShells = diags.filter((d) => d.skip_reason?.includes('SPA shell')).length;
-  const empty = diags.filter((d) => d.skip_reason?.includes('nearly empty')).length;
-  const noMatch = diags.filter((d) => d.skip_reason?.includes('did not match')).length;
-
-  if (blocked >= diags.length / 2) {
-    return 'The site is blocking our scraper (403/429 responses). The owner may need to whitelist our user agent or use a different platform.';
-  }
-  if (spaShells >= diags.length / 2) {
-    return 'The site is a JavaScript single-page app — products render in the browser after load, which a static HTML scraper cannot see. Works best with Shopify, WooCommerce, Wix Stores, Squarespace, or any server-rendered shop.';
-  }
-  if (fetchFailed >= diags.length / 2) {
-    return 'Could not fetch most pages (timeout or non-HTML response). Confirm the URL is correct and the site is online.';
-  }
-  if (empty >= diags.length / 2) {
-    return 'Pages came back nearly empty. The site might be password-protected or under construction.';
-  }
-  if (noMatch >= 1) {
-    return `Found images and prices on ${noMatch} page(s) but the markup didn't match any of our extractors. Try pasting a deeper URL like the actual catalogue page (e.g. /shop, /products, /menu) instead of the homepage.`;
-  }
-  return 'No products extracted. Open the run diagnostics for per-page details.';
-}
+/* ═══════════════════════════════════════════════════════════════
+   EXTRACTORS (per-method)
+   ═══════════════════════════════════════════════════════════════ */
 
 function jsonLdToProduct(node: Record<string, unknown>, url: string): ExtractedProduct | null {
   const name = String(node.name ?? '').trim();
@@ -419,14 +203,9 @@ function ogToProduct($: cheerio.CheerioAPI, url: string): ExtractedProduct | nul
 
 function cssHeuristic($: cheerio.CheerioAPI, url: string): ExtractedProduct[] {
   const out: ExtractedProduct[] = [];
-  // Look for cards: elements with at least one <img> and a heading. A currency
-  // string is a nice-to-have, not required (small business sites often have
-  // no visible price — listed as "from GH₵X" elsewhere or in a "contact for
-  // pricing" model). Cards without prices still get imported with price=null
-  // and the owner can fill it in before approving.
   $('article, li, div, section').each((_, el) => {
     const $el = $(el);
-    if ($el.find('article, li, section').length > 0) return; // skip wrappers
+    if ($el.find('article, li, section').length > 0) return;
     const img = $el.find('img').first();
     const imgSrc = img.attr('src') ?? img.attr('data-src') ?? img.attr('data-original') ?? img.attr('srcset')?.split(' ')[0];
     if (!imgSrc) return;
@@ -449,45 +228,17 @@ function cssHeuristic($: cheerio.CheerioAPI, url: string): ExtractedProduct[] {
       category: null,
       raw: { source: 'css' },
     });
-    if (out.length >= 30) return false; // stop after a reasonable batch
+    if (out.length >= 30) return false;
     return;
   });
   return out;
 }
 
-/* ─── Vision enrichment ─── */
+/* ═══════════════════════════════════════════════════════════════
+   HTTP + URL UTILS
+   ═══════════════════════════════════════════════════════════════ */
 
-const VisionDescSchema = z.object({
-  description: z.string().describe('One to two factual sentences, max 240 chars.'),
-});
-
-async function enrichWithVision(p: ExtractedProduct): Promise<string | null> {
-  if (!p.image_url) return null;
-  const bytes = await fetchImage(p.image_url);
-  if (!bytes) return null;
-  const { object } = await generateObject({
-    model: models.classifier,
-    schema: VisionDescSchema,
-    system:
-      `Write a factual product description for the image (1-2 short sentences, ≤240 chars). Mention what it is, distinctive features, and any visible specs. Do NOT invent attributes you cannot see. Do NOT mention price or availability.`,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: `Product name (for context): ${p.name}` },
-          { type: 'image', image: bytes },
-        ],
-      },
-    ],
-    temperature: 0,
-    maxRetries: 1,
-  });
-  return object.description.trim() || null;
-}
-
-/* ─── HTTP + URL helpers ─── */
-
-async function fetchHtmlWithStatus(
+export async function fetchHtmlWithStatus(
   url: string,
 ): Promise<{ html: string | null; statusCode: number | null }> {
   try {
@@ -507,22 +258,11 @@ async function fetchHtmlWithStatus(
 }
 
 async function fetchHtml(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': USER_AGENT, Accept: 'text/html' },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      redirect: 'follow',
-    });
-    if (!res.ok) return null;
-    const type = res.headers.get('content-type') ?? '';
-    if (!type.includes('text/html')) return null;
-    return await res.text();
-  } catch {
-    return null;
-  }
+  const { html } = await fetchHtmlWithStatus(url);
+  return html;
 }
 
-async function fetchImage(url: string): Promise<Uint8Array | null> {
+export async function fetchImage(url: string): Promise<Uint8Array | null> {
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT },
@@ -561,10 +301,41 @@ function absoluteUrl(base: string, rel: string): string | null {
   }
 }
 
-/** JSON-LD often nests products inside an @graph array. Flatten one level. */
 function flattenGraph(node: unknown): unknown[] {
   if (!node || typeof node !== 'object') return [];
   const obj = node as Record<string, unknown>;
   if (Array.isArray(obj['@graph'])) return obj['@graph'];
   return [obj];
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   VISION ENRICHMENT (called by agentic.ts when descriptions are thin)
+   ═══════════════════════════════════════════════════════════════ */
+
+const VisionDescSchema = z.object({
+  description: z.string().describe('One to two factual sentences, max 240 chars.'),
+});
+
+export async function enrichWithVision(p: ExtractedProduct): Promise<string | null> {
+  if (!p.image_url) return null;
+  const bytes = await fetchImage(p.image_url);
+  if (!bytes) return null;
+  const { object } = await generateObject({
+    model: models.classifier,
+    schema: VisionDescSchema,
+    system:
+      'Write a factual product description for the image (1-2 short sentences, ≤240 chars). Mention what it is, distinctive features, and any visible specs. Do NOT invent attributes you cannot see. Do NOT mention price or availability.',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: `Product name (for context): ${p.name}` },
+          { type: 'image', image: bytes },
+        ],
+      },
+    ],
+    temperature: 0,
+    maxRetries: 1,
+  });
+  return object.description.trim() || null;
 }
