@@ -17,6 +17,7 @@ import { send } from '../outbound/send.js';
 import { classify } from './classifier.js';
 import { runBrain, SKIP_REPLY_SENTINEL } from './brain.js';
 import { isPanicCommand, handlePanic } from './panic.js';
+import { handleInterviewAnswer } from '../scheduler/onboarding-interview.js';
 import { ingestVoiceNote } from './voice.js';
 import { ingestPaymentImage } from './payment.js';
 import { matchForwardedImage, formatMatchReply } from './image-match.js';
@@ -111,7 +112,12 @@ async function processMessage(msg: Msg, channel_id?: string): Promise<void> {
       await handlePanic({ user_id: tenant_id, owner_phone: profile.phone, body });
       return;
     }
-    // Owner sending non-command message to their own number — ignore
+    // Onboarding interview — if owner is mid-interview, this message is
+    // their answer to the current question. handleInterviewAnswer returns
+    // true if it consumed the message.
+    const consumed = await handleInterviewAnswer(tenant_id, body);
+    if (consumed) return;
+    // Owner sending other non-command message to their own number — ignore
     return;
   }
 

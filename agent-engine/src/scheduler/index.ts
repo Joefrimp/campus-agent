@@ -16,6 +16,8 @@ import { runWeeklyEmailDigest } from './weekly-email-digest.js';
 import { sweepExpiredActivations } from '../billing/activation.js';
 import { runStyleLearning } from './style-learning.js';
 import { runCustomerPreferences } from './customer-preferences.js';
+import { runStaleInquiryFollowup } from './stale-inquiry.js';
+import { runOnboardingInterviewKickoffs } from './onboarding-interview.js';
 
 export function startScheduler(): void {
   logger.info('starting internal scheduler');
@@ -55,7 +57,15 @@ export function startScheduler(): void {
   // populates customers.preferences for personalised replies.
   cron.schedule('0 3 * * *', () => safe('customer-preferences', runCustomerPreferences));
 
-  logger.info('scheduler running: W7 (30m), W8 (hourly), W10 (5m), W12 (15m), delivery (hourly), weekly-email (Fri 19:30 local), billing-sweep (5m), style-learning (Sun 02:00 UTC), customer-preferences (daily 03:00 UTC)');
+  // Stale-inquiry follow-up — daily 10:00 UTC. Nudges customers who
+  // enquired but didn't order after 3 days, in the owner's voice.
+  cron.schedule('0 10 * * *', () => safe('stale-inquiry', runStaleInquiryFollowup));
+
+  // Onboarding interview kickoffs — hourly. Sends Q1 to tenants that
+  // are verified + WhatsApp-connected but haven't started the interview.
+  cron.schedule('20 * * * *', () => safe('onboarding-kickoffs', runOnboardingInterviewKickoffs));
+
+  logger.info('scheduler running: W7 (30m), W8 (hourly), W10 (5m), W12 (15m), delivery (hourly), weekly-email (Fri 19:30 local), billing-sweep (5m), style-learning (Sun 02:00 UTC), customer-preferences (daily 03:00 UTC), stale-inquiry (daily 10:00 UTC), onboarding-kickoffs (hourly :20)');
 }
 
 async function safe(name: string, fn: () => Promise<void>): Promise<void> {
