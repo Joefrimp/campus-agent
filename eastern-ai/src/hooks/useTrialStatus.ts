@@ -25,14 +25,24 @@ export function useTrialStatus(profile: Profile | null, userId: string | undefin
     return () => clearInterval(id)
   }, [])
 
+  // The canonical quota counter is profiles.message_count, which is
+  // incremented ONLY when Vector sends an actual AI reply to a customer
+  // (in webhook.ts, after a successful reply send). System messages
+  // (onboarding interview Qs, owner DMs, holding replies, stale-inquiry
+  // followups, panic command replies) are NOT counted — exactly what the
+  // owner expects when they see "messages used".
+  //
+  // We used to count rows in message_logs which logs EVERY message
+  // (inbound + outbound + system), making the badge wildly inflated.
   useEffect(() => {
     if (!userId) return
     supabase
-      .from('message_logs')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .then(({ count }) => {
-        setMessagesUsed(count ?? 0)
+      .from('profiles')
+      .select('message_count')
+      .eq('id', userId)
+      .maybeSingle()
+      .then(({ data }) => {
+        setMessagesUsed(data?.message_count ?? 0)
         setLoadingCount(false)
       })
   }, [userId])
@@ -42,12 +52,13 @@ export function useTrialStatus(profile: Profile | null, userId: string | undefin
     const channel = supabase
       .channel(`msg-count-${userId}-${crypto.randomUUID()}`)
       .on('postgres_changes', {
-        event: 'INSERT',
+        event: 'UPDATE',
         schema: 'public',
-        table: 'message_logs',
-        filter: `user_id=eq.${userId}`,
-      }, () => {
-        setMessagesUsed(prev => prev + 1)
+        table: 'profiles',
+        filter: `id=eq.${userId}`,
+      }, (payload) => {
+        const next = (payload.new as { message_count?: number })?.message_count
+        if (typeof next === 'number') setMessagesUsed(next)
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }

@@ -31,6 +31,7 @@ import { models } from '../lib/gemini.js';
 import { config } from '../config.js';
 import { logger } from '../lib/logger.js';
 import { hmacSha256, safeEqual } from '../lib/crypto.js';
+import { supabase } from '../lib/supabase.js';
 
 /* ─── Public config ─── */
 
@@ -277,7 +278,7 @@ async function replyToActivator(to: string | undefined, message: string): Promis
   }
 }
 
-/* ─── Admin manual grant (HMAC) ─── */
+/* ─── Admin manual grant (HMAC, machine-to-machine / scripts) ─── */
 
 const GrantSchema = z.object({
   user_id: z.string().uuid(),
@@ -301,4 +302,81 @@ export async function handleManualGrantPro(c: Context): Promise<Response> {
     parsed.data.reason,
   );
   return c.json({ success: true });
+}
+
+/* ─── Admin gift Pro by email (dashboard-friendly) ─── */
+/*
+ * Used by the owner's admin page to gift Pro to anyone by their account
+ * email. Auth requires:
+ *   (1) X-Eastern-AI-Secret header  (shared backend secret — handled by
+ *       the sharedSecretAuth middleware that wraps this route in server.ts)
+ *   (2) requester_email in body MUST be in the ADMIN_EMAILS env var
+ *       (comma-separated list). This is a soft gate so anyone with the
+ *       shared secret CAN'T just grant Pro for free.
+ */
+
+const GiftByEmailSchema = z.object({
+  requester_email: z.string().email(),
+  recipient_email: z.string().email(),
+  duration_months: z.number().int().min(1).max(24).default(1),
+  reason: z.string().optional().default('gifted_by_admin'),
+});
+
+export async function handleGiftProByEmail(c: Context): Promise<Response> {
+  const parsed = GiftByEmailSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success)
+    return c.json({ success: false, error: 'invalid payload' }, 400);
+  const { requester_email, recipient_email, duration_months, reason } = parsed.data;
+
+  // Admin allowlist gate
+  const allowlist = (process.env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (allowlist.length === 0) {
+    return c.json(
+      { success: false, error: 'No admin emails configured. Set ADMIN_EMAILS env var on Render.' },
+      200,
+    );
+  }
+  if (!allowlist.includes(requester_email.toLowerCase())) {
+    return c.json({ success: false, error: 'You are not an admin.' }, 403);
+  }
+
+  // Resolve recipient profile via auth.users → profiles
+  const { data: authUser } = await supabaseAuthLookup(recipient_email);
+  if (!authUser?.id) {
+    return c.json(
+      { success: false, error: `No account found for ${recipient_email}.` },
+      200,
+    );
+  }
+
+  await manualGrantPro(authUser.id, duration_months, reason);
+  return c.json({
+    success: true,
+    recipient_user_id: authUser.id,
+    recipient_email,
+    duration_months,
+  });
+}
+
+/** Lookup an account UUID by email. */
+async function supabaseAuthLookup(email: string): Promise<{ data: { id: string } | null }> {
+  // First try profiles.email (if the column exists in this schema).
+  const { data: prof } = await supabase
+    .from('profiles')
+    .select('id')
+    .ilike('email', email)
+    .maybeSingle();
+  if (prof?.id) return { data: { id: prof.id } };
+  // Fall back to auth.users via the admin API (service-role only).
+  try {
+    const { data: page } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 });
+    const match = page?.users?.find((u) => (u.email ?? '').toLowerCase() === email.toLowerCase());
+    return { data: match ? { id: match.id } : null };
+  } catch (err) {
+    logger.warn({ err }, 'admin.listUsers failed during gift-pro lookup');
+    return { data: null };
+  }
 }

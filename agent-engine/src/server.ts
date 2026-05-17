@@ -34,6 +34,7 @@ import {
   handleCancelUpgrade,
   handleActivationWebhook,
   handleManualGrantPro,
+  handleGiftProByEmail,
 } from './webhooks/billing.js';
 import {
   handleScraperStart,
@@ -138,6 +139,10 @@ app.post('/scraper/runs/clear', handleScraperClearRuns);
 // --- Admin (HMAC-signed) ---
 app.post('/admin/replay', handleAdminReplay);
 app.post('/admin/grant-pro', handleManualGrantPro);
+
+// --- Admin (shared-secret + ADMIN_EMAILS allowlist) ---
+app.use('/admin/gift-pro', sharedSecretAuth);
+app.post('/admin/gift-pro', handleGiftProByEmail);
 
 // --- 404 + global error ---
 app.notFound((c) => c.json({ error: 'not found' }, 404));

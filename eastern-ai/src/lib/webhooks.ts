@@ -219,6 +219,29 @@ export function clearScraperRuns(userId: string) {
   )
 }
 
+/* ─── Admin: gift Pro by email ─── */
+
+export interface GiftProResponse {
+  success: boolean
+  recipient_user_id?: string
+  recipient_email?: string
+  duration_months?: number
+  error?: string
+}
+
+export function giftProByEmail(
+  requesterEmail: string,
+  recipientEmail: string,
+  durationMonths: number,
+) {
+  return post<GiftProResponse>('/admin/gift-pro', {
+    requester_email: requesterEmail,
+    recipient_email: recipientEmail,
+    duration_months: durationMonths,
+    reason: 'gifted_by_admin',
+  })
+}
+
 export interface PairPhoneResponse {
   success: boolean
   code?: string
