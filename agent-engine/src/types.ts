@@ -25,6 +25,7 @@ export type Intent =
   | 'delivery_status'
   | 'review'
   | 'spam'
+  | 'forwarded_blast'
   | 'unknown';
 export type ChannelStatus = 'healthy' | 'warning' | 'paused' | 'disconnected';
 

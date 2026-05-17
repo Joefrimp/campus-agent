@@ -15,7 +15,7 @@ import { audit, deadLetter } from '../lib/audit.js';
 import { sha256 } from '../lib/crypto.js';
 import { send } from '../outbound/send.js';
 import { classify } from './classifier.js';
-import { runBrain } from './brain.js';
+import { runBrain, SKIP_REPLY_SENTINEL } from './brain.js';
 import { isPanicCommand, handlePanic } from './panic.js';
 import { ingestVoiceNote } from './voice.js';
 import { ingestPaymentImage } from './payment.js';
@@ -364,8 +364,19 @@ async function processBody(args: BodyArgs): Promise<void> {
   const last3 = await loadRecentTurns(tenant_id, from);
   const classification = await classify({ current_message: body, last_3_turns: last3 });
 
-  if (classification.intent === 'spam' || classification.sentiment === 'abusive') {
-    await audit({ user_id: tenant_id, workflow: 'W1-spam-drop', input: { body, classification } });
+  if (
+    classification.intent === 'spam' ||
+    classification.intent === 'forwarded_blast' ||
+    classification.sentiment === 'abusive'
+  ) {
+    // Silent drop. Owner gets nothing — these are bulk junk forwards
+    // (religious chains, political blasts, share-with-10-friends nonsense)
+    // and the owner doesn't want a DM every time someone forwards one.
+    await audit({
+      user_id: tenant_id,
+      workflow: 'W1-silent-drop',
+      input: { body, classification },
+    });
     return;
   }
 
@@ -480,6 +491,7 @@ async function processBody(args: BodyArgs): Promise<void> {
       customer,
       current_message: body,
       draft_only: needsApproval,
+      is_group: args.is_group,
     });
   } catch (err) {
     // Customer trust posture: never expose technical errors to customers.
@@ -502,6 +514,30 @@ async function processBody(args: BodyArgs): Promise<void> {
       });
     }
     await bumpErrorCounter(tenant_id);
+    return;
+  }
+
+  // 3b. SKIP_REPLY sentinel — brain decided this isn't worth replying to
+  //     (e.g., non-business chatter the classifier let through, group message
+  //     where the agent used dm_outreach instead of replying in the group).
+  //     Stay silent on the customer side; the brain may have already done
+  //     side effects (DM outreach, audit) via tools.
+  if (brainResult.text.includes(SKIP_REPLY_SENTINEL)) {
+    await audit({
+      user_id: tenant_id,
+      workflow: 'W1-skip-reply',
+      input: { body, classification },
+      output: { tools_used: brainResult.tools_used },
+    });
+    // Still log the inbound for analytics + future style-learning context
+    await supabase.from('agent_logs').insert({
+      user_id: tenant_id,
+      contact_phone: from,
+      inbound_message: body,
+      ai_response: '[skipped — non-business or handled via tool]',
+      brand_voice: profile.brand_voice,
+      was_overridden: false,
+    });
     return;
   }
 

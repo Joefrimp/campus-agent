@@ -10,6 +10,8 @@ import { z } from 'zod';
 import { supabase } from '../lib/supabase.js';
 import { embed } from '../lib/gemini.js';
 import { logger } from '../lib/logger.js';
+import { send } from '../outbound/send.js';
+import { sha256 } from '../lib/crypto.js';
 
 export interface ToolContext {
   user_id: string;
@@ -345,6 +347,44 @@ export function buildTools(ctx: ToolContext, caps: ToolCapabilities = {}) {
         });
         if (error) return { error: 'could not schedule followup' };
         return { scheduled: true, fires_in_hours: 24 };
+      },
+    }),
+
+    dm_outreach: tool({
+      description:
+        "Send a SHORT private DM to a specific phone number — used ONLY when a member of a marketing group shows interest in a product the owner posted, and you want to reach them privately instead of replying in the group. Keep the message ≤2 sentences, warm, curiosity-piquing, NOT pushy. After calling this, output [SKIP_REPLY] so nothing is posted back to the group. Do NOT use this for direct messages — only group→DM outreach.",
+      parameters: z.object({
+        to_phone: z.string().describe("The phone number of the group member to DM (digits only, country code included, e.g. '233244123456')"),
+        message: z.string().min(10).max(280).describe("The short captivating private message (≤2 sentences). Mention the product they showed interest in, invite them to chat about getting one."),
+        product_mentioned: z.string().describe("Brief name of the product the customer showed interest in (for audit / logging)"),
+      }),
+      execute: async ({ to_phone, message, product_mentioned }) => {
+        const clean = to_phone.replace(/\D/g, '');
+        if (clean.length < 9) return { sent: false, error: 'invalid phone' };
+        if (clean === ctx.customer_phone.replace(/\D/g, '')) {
+          // Avoid sending DM to the customer who's already chatting with us
+          return { sent: false, error: 'target is current customer — no DM needed' };
+        }
+        const result = await send({
+          user_id: ctx.user_id,
+          to: clean,
+          message,
+          type: 'text',
+          force: true,
+          idempotency_key: sha256(`dm-outreach|${ctx.user_id}|${clean}|${product_mentioned}|${new Date().toISOString().slice(0, 13)}`),
+        });
+        if (!result.sent) {
+          logger.warn({ to_phone: clean, reason: result.reason }, 'dm_outreach send failed');
+          return { sent: false, error: result.reason ?? 'send failed' };
+        }
+        // Audit so the owner can see group→DM conversion attempts in dashboard
+        await supabase.from('ai_audit').insert({
+          user_id: ctx.user_id,
+          workflow: 'dm-outreach-from-group',
+          input: { to_phone: clean, product: product_mentioned },
+          output: { message },
+        });
+        return { sent: true, instruction: 'Now output [SKIP_REPLY] so nothing is posted back to the group.' };
       },
     }),
 

@@ -19,6 +19,7 @@ const ClassifierSchema = z.object({
     'delivery_status',
     'review',
     'spam',
+    'forwarded_blast',
     'unknown',
   ]),
   language: z.enum(['en', 'twi', 'pidgin']),
@@ -27,14 +28,52 @@ const ClassifierSchema = z.object({
   sentiment: z.enum(['positive', 'neutral', 'negative', 'abusive']),
 });
 
-const SYSTEM_PROMPT = `You are a fast intent classifier for a Ghanaian campus business WhatsApp agent. Read the customer message and the last 3 turns. Return ONLY valid JSON matching the schema.
+const SYSTEM_PROMPT = `You are a fast intent classifier for a Ghanaian small-business WhatsApp agent. Read the customer message and the last 3 turns. Return ONLY valid JSON matching the schema.
 
-Rules:
-- requires_owner=true ONLY for: refund_request, formal complaint, custom large order (implied >500 GHS), threats of bad reviews, legal mention, press/journalist mention, police mention.
-- Akan greetings (maakye, maaha, maadwo, ɛte sɛn) → greeting / twi.
-- Pidgin markers (charle, abi, dey, wetin, omo) → pidgin.
-- "Where my order?", "delivery?" → delivery_status.
-- One emoji only / link only / random characters → spam, confidence 0.4.
+DECISION ORDER — check in this order and return the FIRST one that applies:
+
+1. forwarded_blast — broadcast / chain / promotional content that has nothing to
+   do with the business. Strong signals:
+   - Religious / ministry / devotional content (Bible verses, "God", "Pastor",
+     "church", "Healing Streams", "Rhapsody of Realities", "amen", "blessing",
+     "PRAY", "Allah", "Quran", scripture references like "John 3:16")
+   - Political content (NPP, NDC, candidate names, election commentary)
+   - Chain messages ("share with 10 friends", "forward to 5 people", "do not break
+     this", "send this to everyone you love")
+   - Motivational / inspirational forwards not addressed to anyone specific
+   - News headlines copy-pasted without a question
+   - Long message (>=200 chars) containing >=2 outbound links AND no question
+     directly about the business
+   - The literal word "Forwarded" or "Fwd:" anywhere in the body
+   Return forwarded_blast, confidence 0.85, requires_owner=false.
+
+2. spam — one emoji only / single link only / random characters / repeated
+   gibberish / "hi" "hello" with nothing else. confidence 0.4.
+
+3. Business intents (only if message clearly engages with the business):
+   - order_intent — explicit request to buy / order / book / "I want X" / "send me X"
+   - inquiry — question about a specific product, price, availability, hours, location
+   - delivery_status — "where my order?", "when delivery?", tracking question
+   - review — leaving feedback about a past order
+   - complaint — dissatisfaction with a product, service, or interaction
+   - refund_request — explicit ask for money back
+
+4. Conversational:
+   - greeting — pure hello with nothing else (maakye, maaha, hi, hey, ɛte sɛn)
+   - smalltalk — chat / jokes / dating attempts / general chat with no business signal
+
+5. unknown — only if you genuinely can't tell. confidence 0.5, requires_owner=true.
+
+CRITICAL: A message can mention generic words like "give", "want", "need",
+"help", "blessing", "promise" WITHOUT being a business inquiry. Do not infer
+business intent from those words alone — they must be attached to a concrete
+product, price, location, or transaction signal.
+
+OTHER RULES:
+- requires_owner=true ONLY for: refund_request, formal complaint, custom large
+  order (>500 GHS implied), threats of bad reviews, legal/press/police mention.
+- Akan greetings → greeting / twi. Pidgin markers (charle, abi, dey, wetin, omo)
+  → pidgin.
 - If unsure default {intent:"unknown",confidence:0.5,requires_owner:true}.`;
 
 export async function classify(args: {
