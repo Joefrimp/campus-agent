@@ -44,6 +44,7 @@ import {
   handleScraperDeleteRun,
   handleScraperClearRuns,
 } from './webhooks/scraper.js';
+import { handleWeeklyReportPdf, handleWeeklyReportXlsx } from './webhooks/reports.js';
 import { startScheduler } from './scheduler/index.js';
 
 const app = new Hono();
@@ -135,6 +136,10 @@ app.get('/scraper/imports', handleScraperImports);
 app.post('/scraper/imports/decision', handleScraperDecision);
 app.post('/scraper/runs/delete', handleScraperDeleteRun);
 app.post('/scraper/runs/clear', handleScraperClearRuns);
+app.use('/reports/weekly.pdf', sharedSecretAuth);
+app.use('/reports/weekly.xlsx', sharedSecretAuth);
+app.get('/reports/weekly.pdf', handleWeeklyReportPdf);
+app.get('/reports/weekly.xlsx', handleWeeklyReportXlsx);
 
 // --- Admin (HMAC-signed) ---
 app.post('/admin/replay', handleAdminReplay);

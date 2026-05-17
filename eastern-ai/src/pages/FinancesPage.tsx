@@ -7,6 +7,7 @@ import { StatCard } from '../components/finances/StatCard'
 import { RevenueChart } from '../components/finances/RevenueChart'
 import { TransactionsList } from '../components/finances/TransactionsList'
 import { cn } from '../lib/utils'
+import { downloadWeeklyReport } from '../lib/webhooks'
 
 const PERIOD_LABELS: Record<Period, string> = {
   week: 'This Week',
@@ -22,6 +23,20 @@ export function FinancesPage() {
   const { user } = useAuth()
   const [period, setPeriod] = useState<Period>('month')
   const { summary, loading } = useFinances(user?.id, period)
+  const [downloading, setDownloading] = useState<'pdf' | 'xlsx' | null>(null)
+  const [downloadErr, setDownloadErr] = useState<string | null>(null)
+
+  const handleDownload = async (format: 'pdf' | 'xlsx') => {
+    if (!user) return
+    setDownloading(format)
+    setDownloadErr(null)
+    try {
+      await downloadWeeklyReport(user.id, format)
+    } catch (e) {
+      setDownloadErr(e instanceof Error ? e.message : String(e))
+    }
+    setDownloading(null)
+  }
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -48,6 +63,63 @@ export function FinancesPage() {
               {PERIOD_LABELS[p]}
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Weekly report downloads */}
+      <div className="rounded-2xl bg-surface border border-border p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-text">Weekly report</h3>
+          <p className="text-xs text-text-muted mt-0.5">
+            Download the last 7 days as a polished PDF summary or a raw Excel workbook.
+          </p>
+          {downloadErr && (
+            <p className="text-xs text-[#F87171] mt-1">{downloadErr}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => handleDownload('pdf')}
+            disabled={downloading !== null}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border border-border text-sm font-medium text-text hover:bg-surface-2 hover:border-accent/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {downloading === 'pdf' ? (
+              <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                <path d="M22 12a10 10 0 0 1-10 10" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="12" y1="18" x2="12" y2="12" />
+                <polyline points="9 15 12 18 15 15" />
+              </svg>
+            )}
+            PDF
+          </button>
+          <button
+            type="button"
+            onClick={() => handleDownload('xlsx')}
+            disabled={downloading !== null}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-accent text-white text-sm font-semibold hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {downloading === 'xlsx' ? (
+              <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                <path d="M22 12a10 10 0 0 1-10 10" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="12" y1="18" x2="12" y2="12" />
+                <polyline points="9 15 12 18 15 15" />
+              </svg>
+            )}
+            Excel
+          </button>
         </div>
       </div>
 

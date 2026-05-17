@@ -242,6 +242,40 @@ export function giftProByEmail(
   })
 }
 
+/* ─── Report downloads (PDF + Excel) ─── */
+
+/**
+ * Download a weekly report and trigger a save-as in the browser. Format
+ * is 'pdf' or 'xlsx'. weekEnd defaults to today on the server.
+ */
+export async function downloadWeeklyReport(
+  userId: string,
+  format: 'pdf' | 'xlsx',
+  weekEnd?: Date,
+): Promise<void> {
+  const params = new URLSearchParams({ user_id: userId })
+  if (weekEnd) params.set('week_end', weekEnd.toISOString().slice(0, 10))
+  const url = `${BASE}/reports/weekly.${format}?${params.toString()}`
+  const res = await fetch(url, { headers: { 'X-Eastern-AI-Secret': SECRET || '' } })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Download failed (${res.status}): ${text || 'unknown'}`)
+  }
+  const blob = await res.blob()
+  // Pull filename out of Content-Disposition if present, else fall back.
+  const cd = res.headers.get('content-disposition') ?? ''
+  const m = cd.match(/filename="([^"]+)"/)
+  const filename = m?.[1] ?? `weekly.${format}`
+  const objUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objUrl
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(objUrl)
+}
+
 export interface PairPhoneResponse {
   success: boolean
   code?: string
