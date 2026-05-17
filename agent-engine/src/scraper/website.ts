@@ -24,6 +24,7 @@ import { z } from 'zod';
 import { supabase } from '../lib/supabase.js';
 import { models } from '../lib/gemini.js';
 import { logger } from '../lib/logger.js';
+import { tryPlatformApi } from './platform-api.js';
 
 const CURRENCY_RE = /(?:GH[¢₵]|GHS|₵|\$|€|£|₦|R)?\s?(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/i;
 const MAX_PAGES = 6;
@@ -54,13 +55,55 @@ export async function runScraperJob(run_id: string, user_id: string, source_url:
   try {
     await supabase.from('scraper_runs').update({ status: 'crawling' }).eq('id', run_id);
 
-    const pagesToVisit = await discoverProductPages(source_url);
-    logger.info({ run_id, pages: pagesToVisit.length, source_url }, 'scraper: discovered pages');
-
     const seen = new Set<string>();
     const products: ExtractedProduct[] = [];
     const diagnostics: PageDiagnostic[] = [];
     let pagesWithProducts = 0;
+
+    // 0. Platform API probe — Shopify, Bagisto, WooCommerce expose JSON
+    //    catalogues that bypass the SPA-rendering problem entirely. Try
+    //    these first; if any hits, we're done before touching cheerio.
+    const apiResult = await tryPlatformApi(source_url);
+    if (apiResult.products.length > 0) {
+      logger.info(
+        { run_id, platform: apiResult.platform, products: apiResult.products.length },
+        'scraper: platform API hit',
+      );
+      for (const p of apiResult.products) {
+        const key = (p.name + '|' + (p.image_url ?? '')).toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        products.push(p);
+      }
+      diagnostics.push({
+        url: apiResult.endpoint_hit ?? '(api)',
+        status_code: 200,
+        html_kb: 0,
+        method_tried: 'jsonld',
+        products_found: apiResult.products.length,
+        skip_reason: null,
+      });
+      pagesWithProducts = 1;
+    } else {
+      // Record the API attempts as diagnostics so the user knows we tried.
+      for (const ep of apiResult.endpoint_tried) {
+        diagnostics.push({
+          url: ep,
+          status_code: null,
+          html_kb: 0,
+          method_tried: 'none',
+          products_found: 0,
+          skip_reason: 'platform API not exposed',
+        });
+      }
+    }
+
+    // 1. HTML fallback (Shopify themes that don't expose products.json,
+    //    sites with JSON-LD, OpenGraph product pages, server-rendered cards).
+    const pagesToVisit = products.length === 0 ? await discoverProductPages(source_url) : [];
+    if (pagesToVisit.length > 0) {
+      logger.info({ run_id, pages: pagesToVisit.length, source_url }, 'scraper: discovered pages');
+    }
 
     for (const url of pagesToVisit) {
       if (products.length >= 100) break;
@@ -96,7 +139,7 @@ export async function runScraperJob(run_id: string, user_id: string, source_url:
       .update({
         status: 'enriching',
         total_found: products.length,
-        pages_visited: pagesToVisit.length,
+        pages_visited: diagnostics.length,
         pages_with_products: pagesWithProducts,
         diagnostics: diagnostics as unknown as Record<string, unknown>[],
         hint,
