@@ -46,15 +46,25 @@ export async function getOperatorConfig(): Promise<OperatorConfig> {
     .eq('id', 1)
     .maybeSingle();
 
+  const momo_number =
+    config.EASTERN_AI_MOMO_NUMBER || row?.momo_number || '';
+
+  // Single-number setup: when EASTERN_AI_ACTIVATION_PHONE isn't set, the
+  // owner uses the same number for MoMo *and* receiving WhatsApp activation
+  // screenshots — fall back to momo_number so the upgrade flow stays
+  // "configured" without forcing an extra env var.
+  const activation_whatsapp =
+    config.EASTERN_AI_ACTIVATION_PHONE ||
+    row?.activation_whatsapp ||
+    momo_number;
+
   return {
-    momo_number:
-      config.EASTERN_AI_MOMO_NUMBER || row?.momo_number || '',
+    momo_number,
     momo_account_name:
       config.EASTERN_AI_MOMO_NAME || row?.momo_account_name || 'Eastern AI',
     pro_price_ghs:
       config.EASTERN_AI_PRO_PRICE_GHS || Number(row?.pro_price_ghs ?? 100),
-    activation_whatsapp:
-      config.EASTERN_AI_ACTIVATION_PHONE || row?.activation_whatsapp || '',
+    activation_whatsapp,
     activation_minutes: Number(row?.activation_minutes ?? 20),
   };
 }
