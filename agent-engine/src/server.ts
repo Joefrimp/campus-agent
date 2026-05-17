@@ -40,6 +40,8 @@ import {
   handleScraperRuns,
   handleScraperImports,
   handleScraperDecision,
+  handleScraperDeleteRun,
+  handleScraperClearRuns,
 } from './webhooks/scraper.js';
 import { startScheduler } from './scheduler/index.js';
 
@@ -124,10 +126,14 @@ app.use('/scraper/start', sharedSecretAuth);
 app.use('/scraper/runs', sharedSecretAuth);
 app.use('/scraper/imports', sharedSecretAuth);
 app.use('/scraper/imports/decision', sharedSecretAuth);
+app.use('/scraper/runs/delete', sharedSecretAuth);
+app.use('/scraper/runs/clear', sharedSecretAuth);
 app.post('/scraper/start', handleScraperStart);
 app.get('/scraper/runs', handleScraperRuns);
 app.get('/scraper/imports', handleScraperImports);
 app.post('/scraper/imports/decision', handleScraperDecision);
+app.post('/scraper/runs/delete', handleScraperDeleteRun);
+app.post('/scraper/runs/clear', handleScraperClearRuns);
 
 // --- Admin (HMAC-signed) ---
 app.post('/admin/replay', handleAdminReplay);

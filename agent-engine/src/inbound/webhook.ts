@@ -18,6 +18,7 @@ import { classify } from './classifier.js';
 import { runBrain, SKIP_REPLY_SENTINEL } from './brain.js';
 import { isPanicCommand, handlePanic } from './panic.js';
 import { handleInterviewAnswer } from '../scheduler/onboarding-interview.js';
+import { isAddCaption, cmdAddWithImage } from '../owner-commands/catalog.js';
 import { ingestVoiceNote } from './voice.js';
 import { ingestPaymentImage } from './payment.js';
 import { matchForwardedImage, formatMatchReply } from './image-match.js';
@@ -106,6 +107,36 @@ async function processMessage(msg: Msg, channel_id?: string): Promise<void> {
   if (profile.phone && normalizePhone(from) === normalizePhone(profile.phone)) {
     if (isVoice) {
       logger.debug({ tenant_id }, 'voice from owner — dropping (not supported)');
+      return;
+    }
+    // Owner sent an IMAGE with a caption "ADD <name> <price> [| description]"
+    // → add the product to catalogue with photo.
+    if (isImage && isAddCaption(body)) {
+      const image = msg.image as { id?: string } | undefined;
+      const mediaId = image?.id;
+      if (mediaId) {
+        const { data: chan } = await supabase
+          .from('whapi_channels')
+          .select('token')
+          .eq('user_id', tenant_id)
+          .maybeSingle();
+        if (chan?.token) {
+          const reply = await cmdAddWithImage({
+            user_id: tenant_id,
+            whapi_token: chan.token,
+            media_id: mediaId,
+            caption: body,
+          });
+          await send({
+            user_id: tenant_id,
+            to: profile.phone,
+            message: reply,
+            type: 'text',
+            force: true,
+            idempotency_key: sha256(`owner-add-image|${msg.id}`),
+          });
+        }
+      }
       return;
     }
     if (isPanicCommand(body)) {

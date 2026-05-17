@@ -330,7 +330,7 @@ async function validateAndAppend(
   for (const batch of batches) {
     await append({
       phase: 'validate',
-      title: `Validating ${batch.length} candidate(s) with Gemini`,
+      title: `Validating ${batch.length} candidate(s)`,
       detail: 'Filtering out anything that looks like a nav link, footer, generic page heading, or marketing filler rather than a real product.',
     });
     const prompt = `You are a strict gatekeeper deciding which scraped items are REAL PRODUCTS that belong in a shop catalogue.

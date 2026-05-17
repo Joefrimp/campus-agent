@@ -17,6 +17,8 @@ import {
   getScraperRuns,
   getPendingImports,
   decideImports,
+  deleteScraperRun,
+  clearScraperRuns,
   type ScraperRun,
   type PendingImport,
   type ScraperTrailStep,
@@ -33,14 +35,53 @@ export function ImportCataloguePage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busyId, setBusyId] = useState<string | null>(null)
   const [bulkBusy, setBulkBusy] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [deletingRunId, setDeletingRunId] = useState<string | null>(null)
 
-  const refreshRuns = async () => {
+  const refreshRuns = async (showSpinner = false) => {
     if (!user) return
+    if (showSpinner) setRefreshing(true)
     try {
       const r = await getScraperRuns(user.id)
       setRuns(r)
       if (!activeRunId && r.length > 0) setActiveRunId(r[0].id)
     } catch {/* swallow */}
+    if (showSpinner) {
+      // brief minimum spin so user sees the feedback
+      await new Promise(res => setTimeout(res, 400))
+      setRefreshing(false)
+    }
+  }
+
+  const handleDeleteRun = async (runId: string) => {
+    if (!user) return
+    if (!confirm('Remove this import from your history? Items already added to your catalogue will stay there.')) return
+    setDeletingRunId(runId)
+    try {
+      await deleteScraperRun(user.id, runId)
+      setRuns(prev => prev.filter(r => r.id !== runId))
+      if (activeRunId === runId) setActiveRunId(null)
+      setImports([])
+    } catch {/* swallow */}
+    setDeletingRunId(null)
+  }
+
+  const handleClearRuns = async () => {
+    if (!user) return
+    const completed = runs.filter(r =>
+      ['ready_for_review', 'completed', 'failed'].includes(r.status),
+    )
+    if (completed.length === 0) return
+    if (!confirm(`Clear ${completed.length} finished import${completed.length === 1 ? '' : 's'} from history? In-progress runs are kept. Items already in your catalogue stay there.`)) return
+    setClearing(true)
+    try {
+      await clearScraperRuns(user.id)
+      await refreshRuns()
+      setActiveRunId(null)
+      setImports([])
+    } catch {/* swallow */}
+    setClearing(false)
   }
   const refreshImports = async () => {
     if (!user || !activeRunId) return
@@ -169,27 +210,65 @@ export function ImportCataloguePage() {
         <section className="mb-6">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-[Outfit] font-bold text-lg text-white">Recent imports</h2>
-            <button onClick={refreshRuns} className="text-xs text-zinc-400 hover:text-white inline-flex items-center gap-1.5">
-              <RefreshCw className="w-3.5 h-3.5" /> Refresh
-            </button>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={handleClearRuns}
+                disabled={clearing}
+                className="text-xs text-zinc-400 hover:text-[#F87171] inline-flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {clearing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                Clear all
+              </button>
+              <button
+                onClick={() => refreshRuns(true)}
+                disabled={refreshing}
+                className="text-xs text-zinc-400 hover:text-white inline-flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+              </button>
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {runs.slice(0, 8).map(r => (
-              <button
-                key={r.id}
-                onClick={() => setActiveRunId(r.id)}
-                className={`px-4 py-2 rounded-full text-xs font-[Inter] font-medium transition-all border ${
-                  activeRunId === r.id
-                    ? 'bg-vector-primary text-black border-vector-primary'
-                    : 'bg-[#0A0A0A] text-zinc-300 border-[rgba(255,255,255,0.1)] hover:border-vector-primary/40'
-                }`}
-              >
-                <span className="truncate max-w-[180px] inline-block align-middle">
-                  {new URL(r.source_url).hostname}
-                </span>
-                <RunStatusDot status={r.status} />
-              </button>
-            ))}
+            {runs.slice(0, 12).map(r => {
+              const isActive = activeRunId === r.id
+              const isDeletingThis = deletingRunId === r.id
+              const canDelete = ['ready_for_review', 'completed', 'failed'].includes(r.status)
+              let host = r.source_url
+              try { host = new URL(r.source_url).hostname } catch {/* keep raw */}
+              return (
+                <div
+                  key={r.id}
+                  className={`group inline-flex items-stretch rounded-full text-xs font-[Inter] font-medium transition-all border ${
+                    isActive
+                      ? 'bg-vector-primary text-black border-vector-primary'
+                      : 'bg-[#0A0A0A] text-zinc-300 border-[rgba(255,255,255,0.1)] hover:border-vector-primary/40'
+                  } ${isDeletingThis ? 'opacity-40' : ''}`}
+                >
+                  <button
+                    onClick={() => setActiveRunId(r.id)}
+                    disabled={isDeletingThis}
+                    className="pl-4 pr-2 py-2 inline-flex items-center gap-1.5 disabled:cursor-not-allowed"
+                  >
+                    <span className="truncate max-w-[160px] align-middle">{host}</span>
+                    <RunStatusDot status={r.status} />
+                  </button>
+                  {canDelete && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteRun(r.id) }}
+                      disabled={isDeletingThis}
+                      aria-label="Remove this import from history"
+                      className={`pr-3 pl-1.5 py-2 rounded-r-full transition-colors ${
+                        isActive
+                          ? 'text-black/60 hover:text-black'
+                          : 'text-zinc-500 hover:text-[#F87171] opacity-70 group-hover:opacity-100'
+                      }`}
+                    >
+                      {isDeletingThis ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                    </button>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </section>
       )}

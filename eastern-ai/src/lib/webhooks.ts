@@ -199,9 +199,23 @@ export function decideImports(
   action: 'approve' | 'reject',
   opts: { ids?: string[]; run_id?: string; scope?: 'ids' | 'all_pending' },
 ) {
-  return post<{ success: boolean; processed: number }>(
+  return post<{ success: boolean; processed: number; failures?: Array<{ name: string; error: string }> }>(
     '/scraper/imports/decision',
     { user_id: userId, action, ...opts },
+  )
+}
+
+export function deleteScraperRun(userId: string, runId: string) {
+  return post<{ success: boolean; error?: string }>(
+    '/scraper/runs/delete',
+    { user_id: userId, run_id: runId },
+  )
+}
+
+export function clearScraperRuns(userId: string) {
+  return post<{ success: boolean; error?: string }>(
+    '/scraper/runs/clear',
+    { user_id: userId },
   )
 }
 
