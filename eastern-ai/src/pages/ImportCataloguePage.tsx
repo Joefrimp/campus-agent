@@ -245,11 +245,72 @@ export function ImportCataloguePage() {
       )}
 
       {imports.length === 0 && activeRun && activeRun.status === 'ready_for_review' && (
-        <div className="mt-8 text-center text-zinc-400 py-12 rounded-2xl border border-dashed border-[rgba(255,255,255,0.1)]">
-          No products found on that page. Try a different catalogue or product URL.
-        </div>
+        <EmptyResultsCard run={activeRun} />
       )}
     </div>
+  )
+}
+
+function EmptyResultsCard({ run }: { run: ScraperRun }) {
+  const diags = run.diagnostics ?? []
+  return (
+    <section className="mt-8 rounded-2xl bg-[#0A0A0A] border border-dashed border-[rgba(255,255,255,0.1)] p-7">
+      <div className="flex items-start gap-3 mb-4">
+        <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+        <div>
+          <h3 className="font-[Outfit] font-bold text-white text-lg mb-1">No products found</h3>
+          <p className="text-zinc-400 text-sm leading-relaxed">
+            {run.hint ?? 'No products extracted from this site.'}
+          </p>
+        </div>
+      </div>
+
+      {diags.length > 0 && (
+        <details className="mt-4 group">
+          <summary className="text-xs font-[Inter] font-medium text-zinc-500 hover:text-zinc-300 cursor-pointer select-none">
+            Show per-page diagnostics ({diags.length})
+          </summary>
+          <div className="mt-3 space-y-2">
+            {diags.map((d, i) => (
+              <div
+                key={i}
+                className="rounded-lg bg-[#030303] border border-[rgba(255,255,255,0.06)] p-3 text-xs font-mono"
+              >
+                <div className="flex items-center justify-between gap-3 mb-1">
+                  <span className="text-zinc-300 truncate flex-1">{d.url}</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] ${
+                      d.products_found > 0
+                        ? 'bg-vector-primary/15 text-vector-primary'
+                        : 'bg-zinc-700/30 text-zinc-400'
+                    }`}
+                  >
+                    {d.products_found} found
+                  </span>
+                </div>
+                <div className="text-zinc-500 text-[11px] flex flex-wrap gap-x-4 gap-y-0.5">
+                  <span>HTTP {d.status_code ?? 'fail'}</span>
+                  <span>{d.html_kb}KB</span>
+                  <span>method: {d.method_tried}</span>
+                </div>
+                {d.skip_reason && (
+                  <div className="text-[#F87171] text-[11px] mt-1.5 font-sans">{d.skip_reason}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      <div className="mt-5 pt-5 border-t border-[rgba(255,255,255,0.06)] text-xs text-zinc-500 leading-relaxed">
+        <p className="font-medium text-zinc-400 mb-2">Try this:</p>
+        <ul className="list-disc list-inside space-y-1">
+          <li>Paste a deeper URL like <code className="text-zinc-300">/shop</code>, <code className="text-zinc-300">/products</code>, or <code className="text-zinc-300">/menu</code> instead of the homepage</li>
+          <li>If the site is JavaScript-only (React/Next.js without SSR), our scraper cannot see its products — try a Shopify/Wix/WooCommerce store instead</li>
+          <li>Add the products manually via the Catalogue page if the site refuses to scrape</li>
+        </ul>
+      </div>
+    </section>
   )
 }
 

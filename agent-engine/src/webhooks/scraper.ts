@@ -70,7 +70,7 @@ export async function handleScraperRuns(c: Context): Promise<Response> {
     return c.json({ success: false, error: 'invalid user_id' }, 400);
   const { data } = await supabase
     .from('scraper_runs')
-    .select('id, source_url, status, total_found, approved_count, rejected_count, error_message, started_at, finished_at')
+    .select('id, source_url, status, total_found, approved_count, rejected_count, error_message, started_at, finished_at, pages_visited, pages_with_products, diagnostics, hint')
     .eq('user_id', user_id)
     .order('started_at', { ascending: false })
     .limit(20);

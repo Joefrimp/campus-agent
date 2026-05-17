@@ -119,6 +119,15 @@ export function cancelProUpgrade(userId: string, code: string) {
 
 /* ─── Website catalogue importer ─── */
 
+export interface ScraperPageDiagnostic {
+  url: string
+  status_code: number | null
+  html_kb: number
+  method_tried: 'jsonld' | 'og' | 'css' | 'none'
+  products_found: number
+  skip_reason: string | null
+}
+
 export interface ScraperRun {
   id: string
   source_url: string
@@ -129,6 +138,10 @@ export interface ScraperRun {
   error_message: string | null
   started_at: string
   finished_at: string | null
+  pages_visited?: number
+  pages_with_products?: number
+  diagnostics?: ScraperPageDiagnostic[] | null
+  hint?: string | null
 }
 
 export interface PendingImport {

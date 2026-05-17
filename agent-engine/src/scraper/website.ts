@@ -41,6 +41,15 @@ interface ExtractedProduct {
   raw: unknown;
 }
 
+interface PageDiagnostic {
+  url: string;
+  status_code: number | null;
+  html_kb: number;
+  method_tried: 'jsonld' | 'og' | 'css' | 'none';
+  products_found: number;
+  skip_reason: string | null;
+}
+
 export async function runScraperJob(run_id: string, user_id: string, source_url: string): Promise<void> {
   try {
     await supabase.from('scraper_runs').update({ status: 'crawling' }).eq('id', run_id);
@@ -50,13 +59,29 @@ export async function runScraperJob(run_id: string, user_id: string, source_url:
 
     const seen = new Set<string>();
     const products: ExtractedProduct[] = [];
+    const diagnostics: PageDiagnostic[] = [];
+    let pagesWithProducts = 0;
+
     for (const url of pagesToVisit) {
       if (products.length >= 100) break;
-      const items = await extractFromUrl(url).catch((err) => {
+      const result = await extractFromUrlWithDiag(url).catch((err) => {
         logger.warn({ err, url }, 'scraper: page failed');
-        return [];
+        const fallback: { items: ExtractedProduct[]; diag: PageDiagnostic } = {
+          items: [],
+          diag: {
+            url,
+            status_code: null,
+            html_kb: 0,
+            method_tried: 'none',
+            products_found: 0,
+            skip_reason: `fetch threw: ${(err as Error).message?.slice(0, 100) ?? 'unknown'}`,
+          },
+        };
+        return fallback;
       });
-      for (const p of items) {
+      diagnostics.push(result.diag);
+      if (result.items.length > 0) pagesWithProducts++;
+      for (const p of result.items) {
         const key = (p.name + '|' + (p.image_url ?? '')).toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
@@ -64,9 +89,18 @@ export async function runScraperJob(run_id: string, user_id: string, source_url:
       }
     }
 
+    const hint = products.length === 0 ? summariseFailureHint(diagnostics) : null;
+
     await supabase
       .from('scraper_runs')
-      .update({ status: 'enriching', total_found: products.length })
+      .update({
+        status: 'enriching',
+        total_found: products.length,
+        pages_visited: pagesToVisit.length,
+        pages_with_products: pagesWithProducts,
+        diagnostics: diagnostics as unknown as Record<string, unknown>[],
+        hint,
+      })
       .eq('id', run_id);
 
     // Optional Vision enrichment for thin descriptions
@@ -124,38 +158,71 @@ async function discoverProductPages(rootUrl: string): Promise<string[]> {
   const pages = new Set<string>([root]);
 
   // Common catalog/shop paths
-  const common = ['/products', '/shop', '/store', '/catalog', '/menu', '/collections'];
+  const common = [
+    '/products', '/shop', '/store', '/catalog', '/catalogue',
+    '/menu', '/collections', '/services', '/items', '/all-products',
+  ];
   for (const path of common) pages.add(joinUrl(root, path));
 
-  // Crawl root once and harvest internal links that look product-ish
   const html = await fetchHtml(root).catch(() => null);
   if (html) {
     const $ = cheerio.load(html);
+    const sameOriginLinks: string[] = [];
     $('a[href]').each((_: number, el) => {
       const href = $(el).attr('href');
       if (!href) return;
       const abs = joinUrl(root, href);
       if (!abs) return;
-      // Same origin only
-      if (new URL(abs).origin !== new URL(root).origin) return;
-      // Heuristic — looks like a product or catalog listing
-      if (/\/(product|item|menu|collection|shop|store|catalog)/i.test(abs)) {
+      try {
+        if (new URL(abs).origin !== new URL(root).origin) return;
+      } catch {
+        return;
+      }
+      sameOriginLinks.push(abs);
+      // Strong heuristic — explicit product/catalog vocabulary
+      if (/\/(product|item|menu|collection|shop|store|catalog|catalogue|service|cart|order|book|category|categories)/i.test(abs)) {
         pages.add(abs);
       }
     });
+
+    // Fallback: if we still only have the root, follow any same-origin link
+    // (small business sites often use unconventional paths like /our-work,
+    // /pricing, /food, /goods, etc.). Cap aggressively to avoid runaway.
+    if (pages.size <= common.length + 1) {
+      for (const link of sameOriginLinks.slice(0, 8)) pages.add(link);
+    }
   }
 
   return [...pages].slice(0, MAX_PAGES);
 }
 
-/* ─── Per-page extraction ─── */
+/* ─── Per-page extraction (with diagnostics) ─── */
 
-async function extractFromUrl(url: string): Promise<ExtractedProduct[]> {
-  const html = await fetchHtml(url);
-  if (!html) return [];
+async function extractFromUrlWithDiag(
+  url: string,
+): Promise<{ items: ExtractedProduct[]; diag: PageDiagnostic }> {
+  const { html, statusCode } = await fetchHtmlWithStatus(url);
+  const diag: PageDiagnostic = {
+    url,
+    status_code: statusCode,
+    html_kb: html ? Math.round(html.length / 1024) : 0,
+    method_tried: 'none',
+    products_found: 0,
+    skip_reason: null,
+  };
+
+  if (!html) {
+    diag.skip_reason =
+      statusCode === null
+        ? 'request failed (timeout / network / non-HTML response)'
+        : `HTTP ${statusCode}` + (statusCode === 403 || statusCode === 429 ? ' — site is blocking our scraper' : '');
+    return { items: [], diag };
+  }
+
   const $ = cheerio.load(html);
 
-  // 1. JSON-LD
+  // 1. JSON-LD (schema.org Product)
+  diag.method_tried = 'jsonld';
   const jsonLd: ExtractedProduct[] = [];
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
@@ -177,14 +244,82 @@ async function extractFromUrl(url: string): Promise<ExtractedProduct[]> {
       }
     } catch {/* malformed JSON-LD, skip */}
   });
-  if (jsonLd.length > 0) return jsonLd;
+  if (jsonLd.length > 0) {
+    diag.products_found = jsonLd.length;
+    return { items: jsonLd, diag };
+  }
 
-  // 2. OpenGraph (single-product pages)
+  // 2. OpenGraph product (single-product pages)
+  diag.method_tried = 'og';
   const ogProduct = ogToProduct($, url);
-  if (ogProduct) return [ogProduct];
+  if (ogProduct) {
+    diag.products_found = 1;
+    return { items: [ogProduct], diag };
+  }
 
-  // 3. CSS heuristics — repeated cards with image + currency string
-  return cssHeuristic($, url);
+  // 3. CSS heuristic — repeated cards
+  diag.method_tried = 'css';
+  const cssProducts = cssHeuristic($, url);
+  if (cssProducts.length > 0) {
+    diag.products_found = cssProducts.length;
+    return { items: cssProducts, diag };
+  }
+
+  // Nothing matched — diagnose why
+  diag.skip_reason = diagnosePageEmpty($, html);
+  return { items: [], diag };
+}
+
+/** Try to explain why a page yielded zero products. */
+function diagnosePageEmpty($: cheerio.CheerioAPI, html: string): string {
+  const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+  const scriptTags = $('script').length;
+  const visibleTextChars = bodyText.length;
+
+  // SPA shell heuristic: lots of script tags, very little visible text
+  if (scriptTags >= 5 && visibleTextChars < 500) {
+    return 'page looks like a JavaScript SPA shell — products are rendered client-side, scraper cannot see them';
+  }
+  if (visibleTextChars < 200) {
+    return 'page is nearly empty (less than 200 chars of visible text)';
+  }
+  if (!/(\$|₵|GH|£|€|N|R|\d+\.\d{2})/.test(bodyText)) {
+    return 'no currency-like prices found anywhere on the page';
+  }
+  if ($('img').length < 3) {
+    return 'fewer than 3 images on the page — not catalogue-shaped';
+  }
+  // Has prices + images but markup didn't match our patterns
+  void html;
+  return 'page has images and prices but markup did not match any of our extractors (JSON-LD, OpenGraph, repeated cards). Try a deeper URL like /shop or /products.';
+}
+
+/** Aggregate per-page diagnostics into a single human hint for the dashboard. */
+function summariseFailureHint(diags: PageDiagnostic[]): string {
+  if (diags.length === 0) return 'No pages were crawled — check the URL is correct and publicly reachable.';
+
+  const blocked = diags.filter((d) => d.status_code === 403 || d.status_code === 429).length;
+  const fetchFailed = diags.filter((d) => d.status_code === null).length;
+  const spaShells = diags.filter((d) => d.skip_reason?.includes('SPA shell')).length;
+  const empty = diags.filter((d) => d.skip_reason?.includes('nearly empty')).length;
+  const noMatch = diags.filter((d) => d.skip_reason?.includes('did not match')).length;
+
+  if (blocked >= diags.length / 2) {
+    return 'The site is blocking our scraper (403/429 responses). The owner may need to whitelist our user agent or use a different platform.';
+  }
+  if (spaShells >= diags.length / 2) {
+    return 'The site is a JavaScript single-page app — products render in the browser after load, which a static HTML scraper cannot see. Works best with Shopify, WooCommerce, Wix Stores, Squarespace, or any server-rendered shop.';
+  }
+  if (fetchFailed >= diags.length / 2) {
+    return 'Could not fetch most pages (timeout or non-HTML response). Confirm the URL is correct and the site is online.';
+  }
+  if (empty >= diags.length / 2) {
+    return 'Pages came back nearly empty. The site might be password-protected or under construction.';
+  }
+  if (noMatch >= 1) {
+    return `Found images and prices on ${noMatch} page(s) but the markup didn't match any of our extractors. Try pasting a deeper URL like the actual catalogue page (e.g. /shop, /products, /menu) instead of the homepage.`;
+  }
+  return 'No products extracted. Open the run diagnostics for per-page details.';
 }
 
 function jsonLdToProduct(node: Record<string, unknown>, url: string): ExtractedProduct | null {
@@ -241,24 +376,30 @@ function ogToProduct($: cheerio.CheerioAPI, url: string): ExtractedProduct | nul
 
 function cssHeuristic($: cheerio.CheerioAPI, url: string): ExtractedProduct[] {
   const out: ExtractedProduct[] = [];
-  // Look for cards: elements that contain at least one <img> and at least one
-  // text node matching a currency pattern.
-  $('article, li, div').each((_, el) => {
+  // Look for cards: elements with at least one <img> and a heading. A currency
+  // string is a nice-to-have, not required (small business sites often have
+  // no visible price — listed as "from GH₵X" elsewhere or in a "contact for
+  // pricing" model). Cards without prices still get imported with price=null
+  // and the owner can fill it in before approving.
+  $('article, li, div, section').each((_, el) => {
     const $el = $(el);
-    if ($el.find('article, li').length > 0) return; // skip wrappers
+    if ($el.find('article, li, section').length > 0) return; // skip wrappers
     const img = $el.find('img').first();
-    const imgSrc = img.attr('src') ?? img.attr('data-src');
+    const imgSrc = img.attr('src') ?? img.attr('data-src') ?? img.attr('data-original') ?? img.attr('srcset')?.split(' ')[0];
     if (!imgSrc) return;
     const text = $el.text().replace(/\s+/g, ' ').trim();
-    if (text.length < 8 || text.length > 600) return;
+    if (text.length < 4 || text.length > 800) return;
+    const name = (
+      $el.find('h1, h2, h3, h4, h5, .title, [class*="name"], [class*="product-title"], [class*="title"], a[class*="title"]').first().text() ||
+      img.attr('alt') ||
+      ''
+    ).trim();
+    if (!name || name.length > 200) return;
     const currencyMatch = text.match(CURRENCY_RE);
-    if (!currencyMatch) return;
-    const name = ($el.find('h1, h2, h3, h4, .title, [class*="name"]').first().text() || '').trim();
-    if (!name || name.length > 160) return;
     out.push({
-      name: name.slice(0, 160),
+      name: name.slice(0, 200),
       description: text.slice(0, 320),
-      price: Number(currencyMatch[1]?.replace(/,/g, '') ?? 'NaN') || null,
+      price: currencyMatch ? Number(currencyMatch[1]?.replace(/,/g, '') ?? 'NaN') || null : null,
       currency: null,
       image_url: absoluteUrl(url, imgSrc),
       source_url: url,
@@ -302,6 +443,25 @@ async function enrichWithVision(p: ExtractedProduct): Promise<string | null> {
 }
 
 /* ─── HTTP + URL helpers ─── */
+
+async function fetchHtmlWithStatus(
+  url: string,
+): Promise<{ html: string | null; statusCode: number | null }> {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': USER_AGENT, Accept: 'text/html' },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      redirect: 'follow',
+    });
+    const statusCode = res.status;
+    if (!res.ok) return { html: null, statusCode };
+    const type = res.headers.get('content-type') ?? '';
+    if (!type.includes('text/html')) return { html: null, statusCode };
+    return { html: await res.text(), statusCode };
+  } catch {
+    return { html: null, statusCode: null };
+  }
+}
 
 async function fetchHtml(url: string): Promise<string | null> {
   try {
