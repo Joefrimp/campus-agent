@@ -45,6 +45,14 @@ import {
   handleScraperClearRuns,
 } from './webhooks/scraper.js';
 import { handleWeeklyReportPdf, handleWeeklyReportXlsx } from './webhooks/reports.js';
+import {
+  handleCreateThread,
+  handleListThreads,
+  handleDeleteThread,
+  handleListMessages,
+  handleSendOwnerChat,
+  handleGetCredits,
+} from './webhooks/owner-chat.js';
 import { startScheduler } from './scheduler/index.js';
 
 const app = new Hono();
@@ -140,6 +148,15 @@ app.use('/reports/weekly.pdf', sharedSecretAuth);
 app.use('/reports/weekly.xlsx', sharedSecretAuth);
 app.get('/reports/weekly.pdf', handleWeeklyReportPdf);
 app.get('/reports/weekly.xlsx', handleWeeklyReportXlsx);
+
+// --- Owner chat (Vector-as-operator) ---
+app.use('/owner-chat/*', sharedSecretAuth);
+app.post('/owner-chat/threads', handleCreateThread);
+app.get('/owner-chat/threads', handleListThreads);
+app.post('/owner-chat/threads/delete', handleDeleteThread);
+app.get('/owner-chat/messages', handleListMessages);
+app.post('/owner-chat/send', handleSendOwnerChat);
+app.get('/owner-chat/credits', handleGetCredits);
 
 // --- Admin (HMAC-signed) ---
 app.post('/admin/replay', handleAdminReplay);
