@@ -12,7 +12,6 @@ import { AgentLogsPage } from './pages/AgentLogsPage'
 import { CataloguePage } from './pages/CataloguePage'
 import { ImportCataloguePage } from './pages/ImportCataloguePage'
 import { AdminGiftProPage } from './pages/AdminGiftProPage'
-import { OwnerChatPage } from './pages/OwnerChatPage'
 import { OrdersPage } from './pages/OrdersPage'
 import { FinancesPage } from './pages/FinancesPage'
 import { HelpCenterPage } from './pages/HelpCenterPage'
@@ -47,7 +46,6 @@ export default function App() {
           <Route path="catalogue" element={<CataloguePage />} />
           <Route path="catalogue/import" element={<ImportCataloguePage />} />
           <Route path="admin/gift-pro" element={<AdminGiftProPage />} />
-          <Route path="chat" element={<OwnerChatPage />} />
           <Route path="orders" element={<OrdersPage />} />
           <Route path="finances" element={<FinancesPage />} />
           <Route path="help" element={<HelpCenterPage />} />

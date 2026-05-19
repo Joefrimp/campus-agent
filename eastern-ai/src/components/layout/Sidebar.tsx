@@ -35,15 +35,6 @@ const navItems = [
     tour: 'whatsapp-setup',
   },
   {
-    href: '/dashboard/chat', label: 'Chat with Vector',
-    icon: (
-      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4-.8L3 21l1.13-3.86A8 8 0 013 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-      </svg>
-    ),
-    tour: 'chat-with-vector',
-  },
-  {
     href: '/dashboard/sales', label: 'Sales Stream',
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
