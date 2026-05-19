@@ -94,11 +94,22 @@ export async function sendOwnerChatMessage(args: {
       maxTokens: 700,
     });
     replyText = cleanReply(out.text);
+    // Empty reply usually means the LLM made tool calls but produced no
+    // final text. Fall back to a friendly stub so the chat doesn't look
+    // broken — the tool output (if any attachment) is still attached.
+    if (!replyText) {
+      replyText = ctx.file_count > 0
+        ? "Here's what you asked for — the file is attached above."
+        : ctx.tool_call_count > 0
+          ? "I pulled the data but couldn't summarise it cleanly. Try rephrasing your question."
+          : "I didn't catch that. Could you rephrase?";
+    }
   } catch (err) {
-    logger.error({ err, thread_id: args.thread_id }, 'owner-chat: generateText failed');
+    const errMsg = (err as Error).message ?? 'unknown';
+    logger.error({ err, errMsg, thread_id: args.thread_id }, 'owner-chat: generateText failed');
     return {
       ok: false,
-      error: 'Could not generate a reply. Please try again.',
+      error: `Could not generate a reply: ${errMsg.slice(0, 240)}`,
       credits: await getCreditState(args.user_id),
     };
   }

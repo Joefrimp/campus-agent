@@ -26,7 +26,7 @@ export function buildOwnerTools(ctx: OwnerToolContext) {
   return {
     read_business_metrics: tool({
       description:
-        "Pull the owner's recent business metrics (revenue, expenses, net, orders, inquiries, top products, top customers). Use whenever the owner asks about performance, trends, or sales numbers. Period defaults to 'this_week'.",
+        "Pull the owner's recent business metrics (revenue, expenses, net, orders, inquiries, top products, top customers). Use whenever the owner asks about performance, trends, or sales numbers. Period defaults to 'this_week'. Returns ok:false with a hint when there's no data yet — DO NOT pretend numbers exist if so.",
       parameters: z.object({
         period: z.enum(['today', 'this_week', 'last_week', 'this_month']).default('this_week'),
       }),
@@ -37,9 +37,16 @@ export function buildOwnerTools(ctx: OwnerToolContext) {
         try {
           const data = await buildWeeklyReport(ctx.user_id, weekEnd);
           ctx.tool_call_count++;
+          const hasAnyData =
+            (data.totals.orders_paid + data.totals.orders_quoted +
+              data.totals.inquiries + data.totals.customers_new) > 0;
           return {
             ok: true,
             period,
+            has_data: hasAnyData,
+            hint: hasAnyData
+              ? null
+              : 'This tenant has no orders / inquiries in the period yet. Tell the owner there is nothing to report and suggest sending a few test messages first.',
             totals: data.totals,
             daily: data.daily,
             top_products: data.top_products.slice(0, 5),
@@ -47,8 +54,11 @@ export function buildOwnerTools(ctx: OwnerToolContext) {
             expense_breakdown: data.expense_breakdown,
           };
         } catch (err) {
-          logger.warn({ err }, 'read_business_metrics failed');
-          return { ok: false, error: 'could not load metrics' };
+          logger.warn({ err: (err as Error).message }, 'read_business_metrics failed');
+          return {
+            ok: false,
+            error: 'Could not load business metrics. Tell the owner the data layer returned an error and to check Render logs.',
+          };
         }
       },
     }),
