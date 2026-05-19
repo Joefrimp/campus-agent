@@ -85,7 +85,11 @@ export async function sendOwnerChatMessage(args: {
   let replyText = '';
   try {
     const out = await generateText({
-      model: models.agent,
+      // Owner chat uses Flash-Lite to stretch the free-tier quota.
+      // Customer-facing brain (brain.ts) stays on Flash so replies keep
+      // their quality. Owner chat is operator tooling, not the product
+      // surface — Flash-Lite is plenty.
+      model: models.classifier,
       system,
       messages,
       tools,

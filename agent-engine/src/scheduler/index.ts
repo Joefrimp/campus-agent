@@ -49,13 +49,21 @@ export function startScheduler(): void {
     }),
   );
 
-  // Weekly style learning — Sunday 02:00 UTC. Synthesises
-  // business_settings.learned_style_summary from owner_messages + agent_logs.
-  cron.schedule('0 2 * * 0', () => safe('style-learning', runStyleLearning));
+  // LLM-heavy background crons (style-learning + customer-preferences)
+  // are GATED behind ENABLE_LLM_BACKGROUND_JOBS=true. They make per-tenant
+  // and per-customer LLM calls that quickly burn through Gemini free-tier
+  // quota. Default: OFF so the customer-facing brain has all the quota
+  // budget. Turn on once you have paid Gemini billing.
+  if (process.env.ENABLE_LLM_BACKGROUND_JOBS === 'true') {
+    // Weekly style learning — Sunday 02:00 UTC. Uses Gemini Pro (expensive).
+    cron.schedule('0 2 * * 0', () => safe('style-learning', runStyleLearning));
 
-  // Daily customer-preferences extraction — 03:00 UTC. Cheap Flash-Lite,
-  // populates customers.preferences for personalised replies.
-  cron.schedule('0 3 * * *', () => safe('customer-preferences', runCustomerPreferences));
+    // Daily customer-preferences extraction — 03:00 UTC. Flash-Lite per customer.
+    cron.schedule('0 3 * * *', () => safe('customer-preferences', runCustomerPreferences));
+    logger.info('LLM background jobs ENABLED (style-learning + customer-preferences)');
+  } else {
+    logger.info('LLM background jobs DISABLED to conserve free-tier quota. Set ENABLE_LLM_BACKGROUND_JOBS=true on Render to enable.');
+  }
 
   // Stale-inquiry follow-up — daily 10:00 UTC. Nudges customers who
   // enquired but didn't order after 3 days, in the owner's voice.
