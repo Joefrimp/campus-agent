@@ -14,7 +14,7 @@
  */
 import { supabase } from '../lib/supabase.js';
 
-export const OWNER_CHAT_CAP = 300;
+export const OWNER_CHAT_CAP = 100;
 export const OWNER_CHAT_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 export interface CreditState {
