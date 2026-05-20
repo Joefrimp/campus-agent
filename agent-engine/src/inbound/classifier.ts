@@ -4,7 +4,7 @@
  */
 import { generateObject } from 'ai';
 import { z } from 'zod';
-import { models } from '../lib/gemini.js';
+import { models, withQuotaFallback } from '../lib/gemini.js';
 import { logger } from '../lib/logger.js';
 import type { ClassifierOutput } from '../types.js';
 
@@ -81,14 +81,27 @@ export async function classify(args: {
   last_3_turns: Array<{ role: 'user' | 'assistant'; content: string }>;
 }): Promise<ClassifierOutput> {
   try {
-    const { object } = await generateObject({
-      model: models.classifier,
-      schema: ClassifierSchema,
-      system: SYSTEM_PROMPT,
-      prompt: JSON.stringify(args),
-      temperature: 0,
-      maxRetries: 1,
-    });
+    const fb = models.groqFallback;
+    const { object } = await withQuotaFallback(
+      () => generateObject({
+        model: models.classifier,
+        schema: ClassifierSchema,
+        system: SYSTEM_PROMPT,
+        prompt: JSON.stringify(args),
+        temperature: 0,
+        maxRetries: 1,
+      }),
+      fb
+        ? () => generateObject({
+            model: fb,
+            schema: ClassifierSchema,
+            system: SYSTEM_PROMPT,
+            prompt: JSON.stringify(args),
+            temperature: 0,
+            maxRetries: 1,
+          })
+        : undefined,
+    );
     return object;
   } catch (err) {
     logger.warn({ err }, 'classifier failed — defaulting to safe fallback');

@@ -3,8 +3,7 @@
  * Builds the system prompt per-tenant from profile + business_settings,
  * loads the last 12 turns of conversation memory, runs tool-calling loop.
  */
-import { generateText } from 'ai';
-import { models } from '../lib/gemini.js';
+import { models, resilientGenerateText } from '../lib/gemini.js';
 import { supabase } from '../lib/supabase.js';
 import { buildTools, type ToolContext, type ToolCapabilities } from '../tools/index.js';
 import { logger } from '../lib/logger.js';
@@ -61,7 +60,7 @@ export async function runBrain(args: BrainArgs): Promise<BrainResult> {
   const system = buildSystemPrompt(args) + plannerHint;
 
   // First pass with Flash
-  const flashResult = await generateText({
+  const flashResult = await resilientGenerateText({
     model: models.agent,
     system,
     messages: [...messages, { role: 'user', content: args.current_message }],
@@ -76,7 +75,7 @@ export async function runBrain(args: BrainArgs): Promise<BrainResult> {
   // Pro escalation if sentinel emitted
   if (flashResult.text.includes(ESCALATE_SENTINEL)) {
     logger.info({ user_id: args.profile.id }, 'escalating to Pro');
-    const proResult = await generateText({
+    const proResult = await resilientGenerateText({
       model: models.escalation,
       system,
       messages: [...messages, { role: 'user', content: args.current_message }],

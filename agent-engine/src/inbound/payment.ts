@@ -67,11 +67,12 @@ export async function ingestPaymentImage(args: IngestArgs): Promise<{ handled: b
   const bytes = await downloadMedia(channel.token, mediaId);
   if (!bytes) return { handled: false };
 
-  // 2. Extract with Gemini multimodal
+  // 2. Extract with vision model (OpenRouter Qwen 2.5 VL 72B if
+  //    configured, else falls back to Gemini Flash multimodal).
   let extraction: z.infer<typeof ExtractionSchema>;
   try {
     const { object } = await generateObject({
-      model: models.agent,
+      model: models.vision,
       schema: ExtractionSchema,
       system: EXTRACT_PROMPT,
       messages: [

@@ -170,7 +170,7 @@ export async function handleActivationWebhook(c: Context): Promise<Response> {
     let ocr: z.infer<typeof OcrSchema>;
     try {
       const { object } = await generateObject({
-        model: models.agent,
+        model: models.vision,
         schema: OcrSchema,
         system: OCR_PROMPT,
         messages: [

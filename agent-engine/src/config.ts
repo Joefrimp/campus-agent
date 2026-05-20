@@ -25,6 +25,14 @@ const schema = z.object({
 
   // LLM
   GEMINI_API_KEY: z.string().min(20),
+  // OpenRouter — used for vision (Qwen 2.5 VL 72B free) so we don't burn
+  // Gemini's free vision quota on image matching + MoMo OCR. Optional;
+  // when missing, vision falls back to Gemini.
+  OPENROUTER_API_KEY: z.string().optional().default(''),
+  // Groq — used as a text-generation fallback when Gemini returns 429
+  // (rate-limited / quota-exceeded). Optional; when missing, the brain
+  // simply propagates the Gemini error as before.
+  GROQ_API_KEY: z.string().optional().default(''),
 
   // Whapi
   WHAPI_BASE_URL: z.string().url().default('https://gate.whapi.cloud'),

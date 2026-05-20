@@ -100,7 +100,7 @@ export async function matchForwardedImage(
   let fingerprint: z.infer<typeof FingerprintSchema>;
   try {
     const { object } = await generateObject({
-      model: models.agent,
+      model: models.vision,
       schema: FingerprintSchema,
       system: FINGERPRINT_PROMPT,
       messages: [
@@ -201,7 +201,7 @@ export async function matchForwardedImage(
       const candidateBytes = await fetchImageBytes(c.image_url!);
       if (!candidateBytes) continue;
       const { object: match } = await generateObject({
-        model: models.agent,
+        model: models.vision,
         schema: VisualMatchSchema,
         system: VISUAL_MATCH_PROMPT,
         messages: [
