@@ -19,6 +19,7 @@ import { runBrain, SKIP_REPLY_SENTINEL } from './brain.js';
 import { isPanicCommand, handlePanic } from './panic.js';
 import { handleInterviewAnswer } from '../scheduler/onboarding-interview.js';
 import { isAddCaption, cmdAddWithImage } from '../owner-commands/catalog.js';
+import { isOwnerQuestion, handleOwnerQuestion } from './owner-question.js';
 import { ingestVoiceNote } from './voice.js';
 import { ingestPaymentImage } from './payment.js';
 import { matchForwardedImage, formatMatchReply } from './image-match.js';
@@ -65,6 +66,23 @@ async function processMessage(msg: Msg, channel_id?: string): Promise<void> {
   if (msg.from_me === true) {
     const tenant_id = await resolveTenant(channel_id);
     if (tenant_id && body) {
+      // "@vector <question>" via WhatsApp "Message Yourself" — answer it.
+      // (One-number setups: owner self-messages from the business number.)
+      if (isOwnerQuestion(body)) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('phone')
+          .eq('id', tenant_id)
+          .maybeSingle();
+        const replyTo = prof?.phone || (msg.chat_id ?? from);
+        await handleOwnerQuestion({
+          user_id: tenant_id,
+          owner_phone: replyTo,
+          body,
+          source_id: msg.id,
+        });
+        return;
+      }
       await supabase.from('owner_messages').insert({
         user_id: tenant_id,
         contact_phone: msg.chat_id ?? from,
@@ -141,6 +159,17 @@ async function processMessage(msg: Msg, channel_id?: string): Promise<void> {
     }
     if (isPanicCommand(body)) {
       await handlePanic({ user_id: tenant_id, owner_phone: profile.phone, body });
+      return;
+    }
+    // "@vector <question>" — natural-language Q&A from the owner's
+    // personal number (two-number setup).
+    if (isOwnerQuestion(body)) {
+      await handleOwnerQuestion({
+        user_id: tenant_id,
+        owner_phone: profile.phone,
+        body,
+        source_id: msg.id,
+      });
       return;
     }
     // Onboarding interview — if owner is mid-interview, this message is
