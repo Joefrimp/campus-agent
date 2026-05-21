@@ -563,18 +563,22 @@ async function processBody(args: BodyArgs): Promise<void> {
   } catch (err) {
     // Customer trust posture: never expose technical errors to customers.
     // Stay silent on the customer side; alert the owner so they can reply manually.
-    logger.error({ err, tenant_id, from }, 'brain failure — silent customer-side; owner alerted');
+    const errMsg = (err as Error)?.message ?? String(err);
+    logger.error({ err, errMsg, tenant_id, from }, 'brain failure — silent customer-side; owner alerted');
     await deadLetter({
       user_id: tenant_id,
       source: 'inbound',
       payload: { body, classification, source_id },
-      error: (err as Error).message,
+      error: errMsg,
     });
     if (profile.phone) {
       await send({
         user_id: tenant_id,
         to: profile.phone,
-        message: `🚨 Vector couldn't reply to ${customer.display_name ?? from} (${from}). Their last message:\n"${body.slice(0, 220)}${body.length > 220 ? '…' : ''}"\n\nPlease reply manually — they don't know anything went wrong.`,
+        message:
+          `🚨 Vector couldn't reply to ${customer.display_name ?? from} (${from}). Their last message:\n"${body.slice(0, 180)}${body.length > 180 ? '…' : ''}"\n\n` +
+          `Reason: ${errMsg.slice(0, 220)}\n\n` +
+          `Please reply manually — they don't know anything went wrong.`,
         type: 'text',
         force: true,
         idempotency_key: `brainfail-owner-${source_id}`,
