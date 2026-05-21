@@ -722,18 +722,37 @@ async function resolveTenant(channel_id?: string): Promise<string | null> {
     if (data?.user_id) return data.user_id;
   }
 
-  // 2. Single-tenant fallback: if exactly one profile exists, use it.
-  //    Useful in v1 dev when the channel registration row is missing or
-  //    Whapi sends an unexpected channel_id format.
+  // 2. Single-CHANNEL fallback: if there is exactly one whapi_channels row,
+  //    route to its tenant regardless of the channel_id Whapi sent. This
+  //    covers the very common case where the stored whapi_channel_id doesn't
+  //    match the id Whapi puts in the inbound payload (different formats),
+  //    even when multiple PROFILES exist (test accounts).
+  const { data: channels } = await supabase
+    .from('whapi_channels')
+    .select('user_id')
+    .limit(2);
+  if (channels && channels.length === 1) {
+    logger.warn(
+      { channel_id },
+      'no exact channel match; routing to the single connected whapi_channels row',
+    );
+    return channels[0]?.user_id ?? null;
+  }
+
+  // 3. Single-PROFILE fallback: if exactly one profile exists, use it.
   const { data: profiles } = await supabase.from('profiles').select('id').limit(2);
   if (profiles && profiles.length === 1) {
     logger.warn(
       { channel_id },
-      'no whapi_channels row matched; falling back to the single existing profile (dev convenience)',
+      'no channel match; falling back to the single existing profile (dev convenience)',
     );
     return profiles[0]?.id ?? null;
   }
 
+  logger.error(
+    { channel_id },
+    'resolveTenant FAILED — no channel match, and multiple channels/profiles exist. Inbound dropped. Fix: ensure whapi_channels.whapi_channel_id matches the channel_id Whapi sends.',
+  );
   return null;
 }
 

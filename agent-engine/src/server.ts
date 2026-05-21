@@ -97,11 +97,19 @@ app.get('/debug/last-events', async (c) => {
   const user_id = c.req.query('user_id') ?? '';
   if (!/^[0-9a-f-]{36}$/i.test(user_id)) {
     // Fall back to the single existing profile if no/!uuid user_id given.
-    const { data: profs } = await supabase.from('profiles').select('id').limit(2);
+    const { data: profs } = await supabase
+      .from('profiles')
+      .select('id, business_name, phone, plan')
+      .limit(20);
     if (profs && profs.length === 1) {
       return c.redirect(`/debug/last-events?user_id=${profs[0]!.id}`);
     }
-    return c.json({ error: 'pass ?user_id=<uuid>' }, 400);
+    // Multiple (or zero) profiles — list them so the caller can pick the
+    // right user_id and re-call with ?user_id=<id>.
+    return c.json({
+      error: 'Multiple profiles exist. Re-open this URL with ?user_id=<one of the ids below>',
+      profiles: profs ?? [],
+    }, 200);
   }
 
   const [profile, health, audit, dlq, channel] = await Promise.all([
