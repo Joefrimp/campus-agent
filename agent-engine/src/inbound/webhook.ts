@@ -69,6 +69,7 @@ async function processMessage(msg: Msg, channel_id?: string): Promise<void> {
       // "@vector <question>" via WhatsApp "Message Yourself" — answer it.
       // (One-number setups: owner self-messages from the business number.)
       if (isOwnerQuestion(body)) {
+        logger.info({ tenant_id, body: body.slice(0, 80) }, 'owner @vector self-message received');
         const { data: prof } = await supabase
           .from('profiles')
           .select('phone')
