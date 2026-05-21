@@ -712,46 +712,47 @@ async function processBody(args: BodyArgs): Promise<void> {
 // ─── helpers ───────────────────────────────────────────────────────────────
 
 async function resolveTenant(channel_id?: string): Promise<string | null> {
-  // 1. Primary path: exact match on whapi_channels.whapi_channel_id
+  // 1. Exact channel match. In the FUTURE multi-channel world (each tenant
+  //    has their own Whapi number → unique channel_id), this routes uniquely.
+  //    Use a list (not maybeSingle) because today multiple tenant rows can
+  //    share the same placeholder channel_id, which would crash maybeSingle.
   if (channel_id) {
-    const { data } = await supabase
+    const { data: matches } = await supabase
       .from('whapi_channels')
-      .select('user_id')
-      .eq('whapi_channel_id', channel_id)
-      .maybeSingle();
-    if (data?.user_id) return data.user_id;
+      .select('user_id, status')
+      .eq('whapi_channel_id', channel_id);
+    if (matches && matches.length === 1) {
+      return matches[0]!.user_id;
+    }
+    // Multiple rows share this channel_id (current shared-system-channel
+    // reality) → ambiguous. Fall through to the explicit primary tenant.
+    if (matches && matches.length > 1) {
+      logger.warn(
+        { channel_id, count: matches.length },
+        'channel_id matches multiple tenants (shared system channel) — using PRIMARY_TENANT_USER_ID',
+      );
+    }
   }
 
-  // 2. Single-CHANNEL fallback: if there is exactly one whapi_channels row,
-  //    route to its tenant regardless of the channel_id Whapi sent. This
-  //    covers the very common case where the stored whapi_channel_id doesn't
-  //    match the id Whapi puts in the inbound payload (different formats),
-  //    even when multiple PROFILES exist (test accounts).
-  const { data: channels } = await supabase
-    .from('whapi_channels')
-    .select('user_id')
-    .limit(2);
-  if (channels && channels.length === 1) {
-    logger.warn(
-      { channel_id },
-      'no exact channel match; routing to the single connected whapi_channels row',
-    );
-    return channels[0]?.user_id ?? null;
+  // 2. Explicit primary tenant. While only ONE WhatsApp number is genuinely
+  //    connected (the system Whapi channel), the owner designates which
+  //    tenant owns it via PRIMARY_TENANT_USER_ID. This is SAFE — no guessing,
+  //    no cross-wiring. Set it to the tenant whose phone == the connected
+  //    WhatsApp number.
+  const primary = process.env.PRIMARY_TENANT_USER_ID;
+  if (primary && /^[0-9a-f-]{36}$/i.test(primary)) {
+    return primary;
   }
 
-  // 3. Single-PROFILE fallback: if exactly one profile exists, use it.
+  // 3. Single-profile fallback (dev convenience only).
   const { data: profiles } = await supabase.from('profiles').select('id').limit(2);
   if (profiles && profiles.length === 1) {
-    logger.warn(
-      { channel_id },
-      'no channel match; falling back to the single existing profile (dev convenience)',
-    );
     return profiles[0]?.id ?? null;
   }
 
   logger.error(
     { channel_id },
-    'resolveTenant FAILED — no channel match, and multiple channels/profiles exist. Inbound dropped. Fix: ensure whapi_channels.whapi_channel_id matches the channel_id Whapi sends.',
+    'resolveTenant FAILED — no unique channel match and no PRIMARY_TENANT_USER_ID set. Inbound dropped. Set PRIMARY_TENANT_USER_ID on Render to your live tenant id.',
   );
   return null;
 }
