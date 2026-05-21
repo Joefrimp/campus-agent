@@ -242,6 +242,97 @@ export function giftProByEmail(
   })
 }
 
+/* ─── Owner chat ─── */
+
+export interface OwnerChatThread {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface OwnerChatAttachment {
+  type: string
+  filename: string
+  url: string
+  size_bytes: number
+}
+
+export interface OwnerChatMessage {
+  id: string
+  role: 'user' | 'assistant' | 'tool' | 'system'
+  content: string
+  attachments: OwnerChatAttachment[] | null
+  tool_calls: { count: number; files: number } | null
+  credits_spent: number
+  created_at: string
+}
+
+export interface OwnerChatCredits {
+  used: number
+  cap: number
+  remaining: number
+  window_start_at: string
+  resets_in_ms: number
+  reset_at: string
+}
+
+export function createOwnerChatThread(userId: string, title?: string) {
+  return post<{ success: boolean; thread?: OwnerChatThread; error?: string }>(
+    '/owner-chat/threads',
+    { user_id: userId, title },
+  )
+}
+
+export async function listOwnerChatThreads(userId: string): Promise<OwnerChatThread[]> {
+  const res = await fetch(
+    `${BASE}/owner-chat/threads?user_id=${encodeURIComponent(userId)}`,
+    { headers: { 'X-Eastern-AI-Secret': SECRET || '' } },
+  )
+  if (!res.ok) throw new Error(`threads ${res.status}`)
+  const j = (await res.json()) as { success: boolean; threads: OwnerChatThread[] }
+  return j.threads
+}
+
+export function deleteOwnerChatThread(userId: string, threadId: string) {
+  return post<{ success: boolean; error?: string }>(
+    '/owner-chat/threads/delete',
+    { user_id: userId, thread_id: threadId },
+  )
+}
+
+export async function listOwnerChatMessages(
+  userId: string,
+  threadId: string,
+): Promise<OwnerChatMessage[]> {
+  const res = await fetch(
+    `${BASE}/owner-chat/messages?user_id=${encodeURIComponent(userId)}&thread_id=${encodeURIComponent(threadId)}`,
+    { headers: { 'X-Eastern-AI-Secret': SECRET || '' } },
+  )
+  if (!res.ok) throw new Error(`messages ${res.status}`)
+  const j = (await res.json()) as { success: boolean; messages: OwnerChatMessage[] }
+  return j.messages
+}
+
+export function sendOwnerChatMessage(userId: string, threadId: string, text: string) {
+  return post<{
+    ok: boolean
+    error?: string
+    assistant_message_id?: string
+    credits: OwnerChatCredits
+  }>('/owner-chat/send', { user_id: userId, thread_id: threadId, text })
+}
+
+export async function getOwnerChatCredits(userId: string): Promise<OwnerChatCredits> {
+  const res = await fetch(
+    `${BASE}/owner-chat/credits?user_id=${encodeURIComponent(userId)}`,
+    { headers: { 'X-Eastern-AI-Secret': SECRET || '' } },
+  )
+  if (!res.ok) throw new Error(`credits ${res.status}`)
+  const j = (await res.json()) as { success: boolean; credits: OwnerChatCredits }
+  return j.credits
+}
+
 /* ─── Report downloads (PDF + Excel) ─── */
 
 /**
