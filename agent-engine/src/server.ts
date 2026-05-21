@@ -87,6 +87,58 @@ app.get('/', (c) => c.text('agent-engine — running'));
 app.get('/config/pro-payment', handleProPaymentConfig);
 
 /**
+ * Debug — trace the most recent inbound activity for a tenant. Shows what
+ * happened to recent messages (replied / silently dropped / brain failure
+ * with the real error / HITL / quota / etc.) so we can diagnose
+ * "Vector didn't reply" without digging Render logs. Remove later.
+ */
+app.get('/debug/last-events', async (c) => {
+  const { supabase } = await import('./lib/supabase.js');
+  const user_id = c.req.query('user_id') ?? '';
+  if (!/^[0-9a-f-]{36}$/i.test(user_id)) {
+    // Fall back to the single existing profile if no/!uuid user_id given.
+    const { data: profs } = await supabase.from('profiles').select('id').limit(2);
+    if (profs && profs.length === 1) {
+      return c.redirect(`/debug/last-events?user_id=${profs[0]!.id}`);
+    }
+    return c.json({ error: 'pass ?user_id=<uuid>' }, 400);
+  }
+
+  const [profile, health, audit, dlq, channel] = await Promise.all([
+    supabase.from('profiles')
+      .select('plan, message_count, human_in_loop, phone, business_name, is_verified')
+      .eq('id', user_id).maybeSingle(),
+    supabase.from('channel_health')
+      .select('status, panic_paused, consecutive_errors')
+      .eq('user_id', user_id).maybeSingle(),
+    supabase.from('ai_audit')
+      .select('workflow, input, output, created_at')
+      .eq('user_id', user_id)
+      .order('created_at', { ascending: false }).limit(15),
+    supabase.from('dead_letter_queue')
+      .select('error, created_at')
+      .eq('user_id', user_id)
+      .order('created_at', { ascending: false }).limit(5),
+    supabase.from('whapi_channels')
+      .select('whapi_channel_id, status, token')
+      .eq('user_id', user_id).maybeSingle(),
+  ]);
+
+  const tokenFp = (t: string | null | undefined) =>
+    t ? `${t.slice(0, 4)}…${t.slice(-4)} (len ${t.length})` : '(none)';
+
+  return c.json({
+    profile: profile.data,
+    channel_health: health.data ?? '(no row)',
+    whapi_channel: channel.data
+      ? { whapi_channel_id: channel.data.whapi_channel_id, status: channel.data.status, token_fp: tokenFp(channel.data.token) }
+      : '(no whapi_channels row — inbound cannot resolve tenant unless single-tenant fallback applies)',
+    recent_audit: audit.data ?? [],
+    recent_errors: dlq.data ?? [],
+  });
+});
+
+/**
  * Debug — auth-check.
  * Returns a diagnostic comparison of the X-Eastern-AI-Secret header that
  * the frontend sent vs the AGENT_ENGINE_SECRET env var the backend has.
