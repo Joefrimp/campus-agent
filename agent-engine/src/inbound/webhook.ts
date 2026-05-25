@@ -505,19 +505,26 @@ async function processBody(args: BodyArgs): Promise<void> {
     return;
   }
 
-  // 2c. Already-pending check — if there's a pending approval for this customer, just acknowledge briefly.
-  //     Prevents stacking drafts when owner hasn't resolved the prior one yet.
+  // 2c. Already-pending check — only short-circuit when THIS new message is
+  //     itself an approval-type follow-up (refund/complaint). Purpose: avoid
+  //     stacking duplicate approval drafts and avoid contradicting the owner
+  //     while they're still deciding on that same issue.
+  //     A NORMAL business question (price, product list, availability) must
+  //     still be answered even if an unrelated approval is pending — otherwise
+  //     one unresolved complaint silences the customer for up to 24h.
   const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data: existingPending } = await supabase
-    .from('approval_queue')
-    .select('id, customer_followup_sent_at')
-    .eq('user_id', tenant_id)
-    .eq('customer_phone', from)
-    .eq('status', 'pending')
-    .gt('created_at', dayAgo)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: existingPending } = isApprovalIntent
+    ? await supabase
+        .from('approval_queue')
+        .select('id, customer_followup_sent_at')
+        .eq('user_id', tenant_id)
+        .eq('customer_phone', from)
+        .eq('status', 'pending')
+        .gt('created_at', dayAgo)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null };
   if (existingPending) {
     const recentlyAcked =
       existingPending.customer_followup_sent_at &&
