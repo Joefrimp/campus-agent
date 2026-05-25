@@ -20,10 +20,19 @@ export interface SendResult {
   credits: CreditState;
 }
 
+export interface IncomingAttachment {
+  type: string;        // 'image' | 'pdf' | 'xlsx' | 'docx' | 'file'
+  url: string;         // public Supabase Storage URL
+  mime: string;        // e.g. 'image/jpeg', 'application/pdf'
+  name: string;
+  size_bytes?: number;
+}
+
 export async function sendOwnerChatMessage(args: {
   user_id: string;
   thread_id: string;
   text: string;
+  attachments?: IncomingAttachment[];
 }): Promise<SendResult> {
   // Pre-flight credit check: refuse with 0 charge if at the cap
   const pre = await getCreditState(args.user_id);
@@ -35,14 +44,21 @@ export async function sendOwnerChatMessage(args: {
     };
   }
 
-  // Persist user turn first
+  const incoming = args.attachments ?? [];
+  const images = incoming.filter((a) => a.mime?.startsWith('image/'));
+  const otherFiles = incoming.filter((a) => !a.mime?.startsWith('image/'));
+
+  // Persist user turn first (store attachments so they render in history)
   const userTurn = await supabase
     .from('owner_chat_messages')
     .insert({
       thread_id: args.thread_id,
       user_id: args.user_id,
       role: 'user',
-      content: args.text,
+      content: args.text || (incoming.length ? '[attachment]' : ''),
+      attachments: incoming.length
+        ? incoming.map((a) => ({ type: a.type, filename: a.name, url: a.url, size_bytes: a.size_bytes ?? 0 }))
+        : null,
       credits_spent: 0,
     })
     .select('id, created_at')
@@ -56,12 +72,38 @@ export async function sendOwnerChatMessage(args: {
     .in('role', ['user', 'assistant'])
     .order('created_at', { ascending: false })
     .limit(20);
-  const messages = (history ?? [])
-    .reverse()
-    .map((m: { role: string; content: string }) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
+  // content can be a plain string (history) or multimodal parts (this turn).
+  type Part =
+    | { type: 'text'; text: string }
+    | { type: 'image'; image: URL };
+  const messages: Array<{ role: 'user' | 'assistant'; content: string | Part[] }> =
+    (history ?? [])
+      .reverse()
+      .map((m: { role: string; content: string }) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      }));
+
+  // If the owner attached images, rebuild the LAST (current) user turn as
+  // multimodal content so the vision-capable model can actually see them.
+  // Non-image files are referenced by name in the text (full document
+  // parsing is a follow-up).
+  if (incoming.length > 0 && messages.length > 0) {
+    const lastIdx = messages.length - 1;
+    let text = args.text?.trim() || 'Take a look at what I attached.';
+    if (otherFiles.length > 0) {
+      text += `\n\n[Attached files: ${otherFiles.map((f) => `${f.name} (${f.mime})`).join(', ')}]`;
+    }
+    const parts: Part[] = [{ type: 'text', text }];
+    for (const img of images) {
+      try {
+        parts.push({ type: 'image', image: new URL(img.url) });
+      } catch {/* skip malformed url */}
+    }
+    messages[lastIdx] = { role: 'user', content: parts };
+  }
+
+  const hasImages = images.length > 0;
 
   // Load tenant context for the prompt
   const { data: profile } = await supabase
@@ -84,13 +126,16 @@ export async function sendOwnerChatMessage(args: {
   let replyText = '';
   try {
     const out = await resilientGenerateText({
-      // Owner chat uses Flash-Lite to stretch the free-tier quota, with
-      // automatic Groq (GPT-OSS-120B) fallback on quota errors. Customer-
-      // facing brain stays on Flash; owner chat is operator tooling.
-      model: models.classifier,
-      fallbackModel: models.groqFallback,
+      // No images → Flash-Lite (cheap, stretches free quota).
+      // Images attached → Gemini Flash (multimodal AND supports tools, so
+      // Vector can both SEE the image and call tools in the same turn).
+      // Groq fallback only kicks in for the text-only path (Groq has no
+      // vision); for image turns we rely on Gemini's multimodal quota.
+      model: hasImages ? models.agent : models.classifier,
+      fallbackModel: hasImages ? undefined : models.groqFallback,
       system,
-      messages,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      messages: messages as any,
       tools,
       maxSteps: 6,
       temperature: 0.5,

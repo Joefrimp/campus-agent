@@ -11,8 +11,10 @@ import { motion, AnimatePresence } from 'motion/react'
 import {
   MessageSquarePlus, Send, Loader2, Trash2, FileText, FileSpreadsheet,
   File as FileIcon, Sparkles, Bot, User as UserIcon, Clock, RefreshCw,
+  Paperclip, Camera, ImageIcon, X,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { supabase } from '../lib/supabase'
 import {
   createOwnerChatThread,
   listOwnerChatThreads,
@@ -24,7 +26,39 @@ import {
   type OwnerChatMessage,
   type OwnerChatAttachment,
   type OwnerChatCredits,
+  type OutgoingAttachment,
 } from '../lib/webhooks'
+
+/* ─── Attachment helpers ─── */
+
+// A file the owner picked but hasn't sent yet.
+interface PendingAttachment {
+  id: string
+  file: File
+  previewUrl: string | null // object URL for images, null otherwise
+  url: string | null        // public URL once uploaded
+  uploading: boolean
+  error: boolean
+}
+
+function attachmentType(mime: string): string {
+  if (mime.startsWith('image/')) return 'image'
+  if (mime === 'application/pdf') return 'pdf'
+  if (mime.includes('spreadsheet') || mime.includes('excel') || mime.includes('csv')) return 'xlsx'
+  if (mime.includes('word') || mime.includes('document')) return 'docx'
+  return 'file'
+}
+
+async function uploadToStorage(userId: string, file: File): Promise<string> {
+  const ext = file.name.split('.').pop() ?? 'bin'
+  const path = `${userId}/owner-chat/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+  const { error } = await supabase.storage
+    .from('product-images')
+    .upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type })
+  if (error) throw new Error(error.message)
+  const { data } = supabase.storage.from('product-images').getPublicUrl(path)
+  return data.publicUrl
+}
 
 export function OwnerChatPage() {
   const { user } = useAuth()
@@ -37,7 +71,11 @@ export function OwnerChatPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [credits, setCredits] = useState<OwnerChatCredits | null>(null)
   const [error, setError] = useState('')
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const endRef = useRef<HTMLDivElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const cameraInputRef = useRef<HTMLInputElement | null>(null)
 
   /* ─── load threads + credits ─── */
   const refreshThreads = async () => {
@@ -92,8 +130,47 @@ export function OwnerChatPage() {
     } catch {/* swallow */}
     setDeletingId(null)
   }
+  /* ─── attachment handlers ─── */
+  const addFiles = async (files: FileList | null) => {
+    if (!user || !files || files.length === 0) return
+    setError('')
+    const room = Math.max(0, 8 - attachments.length)
+    const picked = Array.from(files).slice(0, room)
+    const next: PendingAttachment[] = picked.map(file => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      file,
+      previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+      url: null,
+      uploading: true,
+      error: false,
+    }))
+    setAttachments(prev => [...prev, ...next])
+    // Upload each in parallel; flip uploading flag as they land.
+    await Promise.all(next.map(async (att) => {
+      try {
+        const url = await uploadToStorage(user.id, att.file)
+        setAttachments(prev => prev.map(a => a.id === att.id ? { ...a, url, uploading: false } : a))
+      } catch {
+        setAttachments(prev => prev.map(a => a.id === att.id ? { ...a, uploading: false, error: true } : a))
+      }
+    }))
+  }
+  const removeAttachment = (id: string) => {
+    setAttachments(prev => {
+      const gone = prev.find(a => a.id === id)
+      if (gone?.previewUrl) URL.revokeObjectURL(gone.previewUrl)
+      return prev.filter(a => a.id !== id)
+    })
+  }
+
+  const uploadingAny = attachments.some(a => a.uploading)
+
   const handleSend = async () => {
-    if (!user || !input.trim()) return
+    if (!user) return
+    const text = input.trim()
+    const ready = attachments.filter(a => a.url && !a.error)
+    if (!text && ready.length === 0) return
+    if (uploadingAny) return // wait for uploads to finish
     let threadId = activeId
     if (!threadId) {
       const res = await createOwnerChatThread(user.id)
@@ -102,18 +179,30 @@ export function OwnerChatPage() {
       setThreads(prev => [res.thread!, ...prev])
       setActiveId(threadId)
     }
-    const text = input.trim()
+    const outgoing: OutgoingAttachment[] = ready.map(a => ({
+      type: attachmentType(a.file.type),
+      url: a.url!,
+      mime: a.file.type || 'application/octet-stream',
+      name: a.file.name,
+      size_bytes: a.file.size,
+    }))
     setInput('')
     setSending(true)
     setError('')
     // Optimistic user bubble
     const optimisticId = `tmp-${Date.now()}`
     setMessages(prev => [...prev, {
-      id: optimisticId, role: 'user', content: text, attachments: null,
+      id: optimisticId, role: 'user', content: text || '[attachment]',
+      attachments: outgoing.length
+        ? outgoing.map(o => ({ type: o.type, filename: o.name, url: o.url, size_bytes: o.size_bytes ?? 0 }))
+        : null,
       tool_calls: null, credits_spent: 0, created_at: new Date().toISOString(),
     }])
+    // Clear the composer attachments (revoke previews)
+    attachments.forEach(a => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl) })
+    setAttachments([])
     try {
-      const res = await sendOwnerChatMessage(user.id, threadId, text)
+      const res = await sendOwnerChatMessage(user.id, threadId, text, outgoing)
       if (res.credits) setCredits(res.credits)
       if (!res.ok) {
         setError(res.error || 'Could not send.')
@@ -203,7 +292,62 @@ export function OwnerChatPage() {
                 Out of chat credits. They reset at {credits ? new Date(credits.reset_at).toLocaleString() : 'soon'}.
               </div>
             )}
+            {/* Pending attachment chips */}
+            {attachments.length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {attachments.map(a => (
+                  <ComposerChip key={a.id} att={a} onRemove={() => removeAttachment(a.id)} />
+                ))}
+              </div>
+            )}
+
+            {/* Hidden inputs */}
+            <input
+              ref={fileInputRef} type="file" multiple className="hidden"
+              onChange={(e) => { addFiles(e.target.files); e.target.value = '' }}
+            />
+            <input
+              ref={imageInputRef} type="file" accept="image/*" multiple className="hidden"
+              onChange={(e) => { addFiles(e.target.files); e.target.value = '' }}
+            />
+            <input
+              ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden"
+              onChange={(e) => { addFiles(e.target.files); e.target.value = '' }}
+            />
+
             <div className="flex items-end gap-2">
+              <div className="flex items-center gap-1 pb-1">
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  disabled={sending || !!outOfCredits || attachments.length >= 8}
+                  className="shrink-0 h-9 w-9 rounded-full text-zinc-400 hover:text-vector-primary hover:bg-white/5 flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label="Attach image"
+                  title="Add image"
+                >
+                  <ImageIcon className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => cameraInputRef.current?.click()}
+                  disabled={sending || !!outOfCredits || attachments.length >= 8}
+                  className="shrink-0 h-9 w-9 rounded-full text-zinc-400 hover:text-vector-primary hover:bg-white/5 flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label="Take photo"
+                  title="Take photo"
+                >
+                  <Camera className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={sending || !!outOfCredits || attachments.length >= 8}
+                  className="shrink-0 h-9 w-9 rounded-full text-zinc-400 hover:text-vector-primary hover:bg-white/5 flex items-center justify-center transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label="Attach file"
+                  title="Attach file"
+                >
+                  <Paperclip className="w-5 h-5" />
+                </button>
+              </div>
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -221,11 +365,11 @@ export function OwnerChatPage() {
               />
               <button
                 onClick={handleSend}
-                disabled={sending || !input.trim() || !!outOfCredits}
+                disabled={sending || uploadingAny || (!input.trim() && attachments.filter(a => a.url && !a.error).length === 0) || !!outOfCredits}
                 className="shrink-0 h-12 w-12 rounded-full bg-vector-primary text-black flex items-center justify-center hover:brightness-110 transition disabled:opacity-40 disabled:cursor-not-allowed"
                 aria-label="Send"
               >
-                {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                {sending || uploadingAny ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
               </button>
             </div>
             <p className="text-[10px] text-zinc-600 text-center mt-2">
@@ -344,6 +488,18 @@ function Bubble({ msg }: { msg: OwnerChatMessage }) {
 }
 
 function Attachment({ a }: { a: OwnerChatAttachment }) {
+  // Render images as a clickable thumbnail.
+  if (a.type === 'image') {
+    return (
+      <a href={a.url} target="_blank" rel="noopener noreferrer" className="block">
+        <img
+          src={a.url}
+          alt={a.filename}
+          className="max-h-48 max-w-[220px] rounded-xl border border-[rgba(255,255,255,0.1)] object-cover hover:border-vector-primary/50 transition"
+        />
+      </a>
+    )
+  }
   const Icon = a.type === 'pdf' ? FileText : a.type === 'xlsx' ? FileSpreadsheet : FileIcon
   const kb = a.size_bytes < 1024 * 1024
     ? `${Math.round(a.size_bytes / 1024)} KB`
@@ -364,5 +520,50 @@ function Attachment({ a }: { a: OwnerChatAttachment }) {
         <div className="text-[10px] text-zinc-500 uppercase tracking-wider">{a.type} · {kb}</div>
       </div>
     </a>
+  )
+}
+
+/* Pending attachment preview in the composer (before send). */
+function ComposerChip({ att, onRemove }: { att: PendingAttachment; onRemove: () => void }) {
+  const isImage = att.file.type.startsWith('image/')
+  const Icon = attachmentType(att.file.type) === 'pdf' ? FileText
+    : attachmentType(att.file.type) === 'xlsx' ? FileSpreadsheet
+    : FileIcon
+  return (
+    <div className="relative group">
+      {isImage && att.previewUrl ? (
+        <div className="relative w-16 h-16 rounded-lg overflow-hidden border border-[rgba(255,255,255,0.12)]">
+          <img src={att.previewUrl} alt={att.file.name} className="w-full h-full object-cover" />
+          {att.uploading && (
+            <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+              <Loader2 className="w-4 h-4 animate-spin text-white" />
+            </div>
+          )}
+          {att.error && (
+            <div className="absolute inset-0 bg-[#F87171]/30 flex items-center justify-center text-[9px] text-white font-medium">
+              failed
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 bg-[#030303] border border-[rgba(255,255,255,0.12)] rounded-lg pl-2.5 pr-2 py-2 max-w-[200px]">
+          <div className="w-7 h-7 rounded bg-vector-primary/15 border border-vector-primary/30 flex items-center justify-center shrink-0">
+            {att.uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-vector-primary" />
+              : <Icon className="w-3.5 h-3.5 text-vector-primary" />}
+          </div>
+          <span className={`text-[11px] truncate ${att.error ? 'text-[#F87171]' : 'text-zinc-300'}`}>
+            {att.error ? 'Upload failed' : att.file.name}
+          </span>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-[#0A0A0A] border border-[rgba(255,255,255,0.2)] text-zinc-300 hover:text-white hover:border-white flex items-center justify-center transition"
+        aria-label="Remove attachment"
+      >
+        <X className="w-3 h-3" />
+      </button>
+    </div>
   )
 }

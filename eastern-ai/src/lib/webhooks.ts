@@ -314,13 +314,31 @@ export async function listOwnerChatMessages(
   return j.messages
 }
 
-export function sendOwnerChatMessage(userId: string, threadId: string, text: string) {
+export interface OutgoingAttachment {
+  type: string
+  url: string
+  mime: string
+  name: string
+  size_bytes?: number
+}
+
+export function sendOwnerChatMessage(
+  userId: string,
+  threadId: string,
+  text: string,
+  attachments?: OutgoingAttachment[],
+) {
   return post<{
     ok: boolean
     error?: string
     assistant_message_id?: string
     credits: OwnerChatCredits
-  }>('/owner-chat/send', { user_id: userId, thread_id: threadId, text })
+  }>('/owner-chat/send', {
+    user_id: userId,
+    thread_id: threadId,
+    text,
+    ...(attachments && attachments.length ? { attachments } : {}),
+  })
 }
 
 export async function getOwnerChatCredits(userId: string): Promise<OwnerChatCredits> {

@@ -88,7 +88,22 @@ export async function handleListMessages(c: Context): Promise<Response> {
 const SendSchema = z.object({
   user_id: z.string().uuid(),
   thread_id: z.string().uuid(),
-  text: z.string().min(1).max(4000),
+  // text can be empty when the owner sends attachments with no caption
+  text: z.string().max(4000).default(''),
+  attachments: z
+    .array(
+      z.object({
+        type: z.string(),
+        url: z.string().url(),
+        mime: z.string(),
+        name: z.string(),
+        size_bytes: z.number().optional(),
+      }),
+    )
+    .max(8)
+    .optional(),
+}).refine((d) => (d.text && d.text.trim().length > 0) || (d.attachments && d.attachments.length > 0), {
+  message: 'Provide text or at least one attachment',
 });
 
 export async function handleSendOwnerChat(c: Context): Promise<Response> {
