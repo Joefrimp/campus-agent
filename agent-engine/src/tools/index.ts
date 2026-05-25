@@ -49,20 +49,82 @@ export function buildTools(ctx: ToolContext, caps: ToolCapabilities = {}) {
         name: z.string().describe('The product or service name or partial name'),
       }),
       execute: async ({ name }) => {
-        const { data, error } = await supabase
+        const cols = 'id, name, price, min_price, in_stock, description, category, image_url, kind, unit, duration_minutes';
+        // 1) Precise substring match first.
+        const direct = await supabase
           .from('price_list')
-          .select('id, name, price, min_price, in_stock, description, category, image_url, kind, unit, duration_minutes')
+          .select(cols)
           .eq('user_id', ctx.user_id)
           .ilike('name', `%${name}%`)
           .limit(5);
-        if (error) {
-          logger.error({ err: error, name }, 'lookup_price failed');
+        if (direct.error) {
+          logger.error({ err: direct.error, name }, 'lookup_price failed');
           return { error: 'lookup failed' };
         }
-        if (!data || data.length === 0) {
-          return { matches: [], hint: 'No items matched. Use escalate_to_owner with action_type="custom_quote".' };
+        if (direct.data && direct.data.length > 0) {
+          return { matches: direct.data };
         }
-        return { matches: data };
+
+        // 2) No direct hit → token-based fallback. "HP EliteBook 1040 G8 x360"
+        //    won't substring-match any row, but its tokens (HP, EliteBook…)
+        //    surface RELATED models the owner DOES stock, so the agent can
+        //    offer real alternatives instead of escalating on every near-miss.
+        const tokens = name
+          .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+          .split(/\s+/)
+          .map((t) => t.trim())
+          .filter((t) => t.length >= 3 && !/^(the|and|for|with|new|one|pcs|original)$/i.test(t))
+          .slice(0, 6);
+        if (tokens.length > 0) {
+          const orExpr = tokens.map((t) => `name.ilike.%${t}%`).join(',');
+          const fuzzy = await supabase
+            .from('price_list')
+            .select(cols)
+            .eq('user_id', ctx.user_id)
+            .or(orExpr)
+            .limit(8);
+          if (fuzzy.data && fuzzy.data.length > 0) {
+            return {
+              matches: fuzzy.data,
+              note: 'No exact match — these are the CLOSEST items in stock. Offer the most relevant ones confidently as alternatives; do NOT claim the exact model unless a name truly matches.',
+            };
+          }
+        }
+
+        return {
+          matches: [],
+          hint: 'Nothing comparable in the catalogue. Use list_catalogue to show the range, or escalate_to_owner action_type="custom_quote" to alert the owner.',
+        };
+      },
+    }),
+
+    list_catalogue: tool({
+      description:
+        "List/browse what the business sells. Use whenever the customer asks what you have ('what do you sell', 'send your list', 'show me your products', 'what's available', 'do you have laptops/chargers/airpods'). Pass `keyword` to filter by type/brand (e.g. 'EliteBook', 'laptop', 'charger', 'airpod', 'wifi'); omit it to get the full range. Returns names + prices + stock. ALWAYS use this instead of guessing or saying you can't browse.",
+      parameters: z.object({
+        keyword: z.string().optional().describe("Optional filter: a brand or product type, e.g. 'laptop', 'EliteBook', 'charger', 'airpod', 'wifi'. Omit to list everything in stock."),
+        in_stock_only: z.boolean().default(true),
+        limit: z.number().int().min(1).max(60).default(50),
+      }),
+      execute: async ({ keyword, in_stock_only, limit }) => {
+        let q = supabase
+          .from('price_list')
+          .select('name, price, in_stock, category, unit, kind')
+          .eq('user_id', ctx.user_id)
+          .order('name')
+          .limit(limit);
+        if (in_stock_only) q = q.eq('in_stock', true);
+        if (keyword && keyword.trim()) q = q.ilike('name', `%${keyword.trim()}%`);
+        const { data, error } = await q;
+        if (error) {
+          logger.error({ err: error, keyword }, 'list_catalogue failed');
+          return { error: 'could not load catalogue' };
+        }
+        return {
+          count: data?.length ?? 0,
+          items: data ?? [],
+          instruction: 'Share a CONCISE, scannable list — do not dump 40 lines. Group or highlight the most relevant items, give prices, and ask what they want. If a keyword was used, show those matches.',
+        };
       },
     }),
 
