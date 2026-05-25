@@ -17,6 +17,10 @@ export interface ToolContext {
   user_id: string;
   customer_phone: string;
   customer_id: string | null;
+  /** True when the brain is running in draft-only mode (refund/complaint).
+   *  In that mode webhook.ts already alerts the owner + queues the approval,
+   *  so escalate_to_owner must NOT double-notify. */
+  draft_only?: boolean;
 }
 
 /**
@@ -308,9 +312,9 @@ export function buildTools(ctx: ToolContext, caps: ToolCapabilities = {}) {
 
     escalate_to_owner: tool({
       description:
-        "Escalate to the owner when you cannot answer (refund, complaint, custom large order, missing price, ambiguous request). Provide the reply you would send if you were authorized. The owner will review and either approve, edit, or reject. After calling this, send the customer a brief holding message.",
+        "Escalate to the owner the INSTANT you can't fully serve the customer yourself: an item/price/variant you don't have, an out-of-stock product they want, a refund, a complaint, a large/custom order, or any ambiguous request. This ALERTS THE OWNER ON WHATSAPP IMMEDIATELY and queues it in their dashboard. Provide the reply you'd send if authorized. After calling this, send the customer a brief, confident holding message. Be diligent — never leave a wanted item unescalated.",
       parameters: z.object({
-        reason: z.string().describe('Why you are escalating (one short sentence)'),
+        reason: z.string().describe('Why you are escalating, with specifics (e.g. "customer wants a Foldable Laptop Stand — not in catalogue")'),
         drafted_reply: z.string().describe('The exact message you would send the customer if approved'),
         action_type: z.enum(['refund', 'large_discount', 'custom_quote', 'complaint', 'other']),
       }),
@@ -330,7 +334,41 @@ export function buildTools(ctx: ToolContext, caps: ToolCapabilities = {}) {
           logger.error({ err: error }, 'escalate_to_owner failed');
           return { error: 'could not queue escalation' };
         }
-        return { queued: true, approval_id: data?.id, instruction: 'Send a brief holding reply to the customer.' };
+
+        // Immediately alert the owner on WhatsApp — unless we're in draft mode,
+        // where webhook.ts sends its own owner notification (avoid double DM).
+        if (!ctx.draft_only) {
+          const [{ data: prof }, { data: cust }] = await Promise.all([
+            supabase.from('profiles').select('phone, business_name').eq('id', ctx.user_id).maybeSingle(),
+            ctx.customer_id
+              ? supabase.from('customers').select('display_name').eq('id', ctx.customer_id).maybeSingle()
+              : Promise.resolve({ data: null as { display_name: string | null } | null }),
+          ]);
+          if (prof?.phone) {
+            const who = cust?.display_name?.trim() || ctx.customer_phone;
+            const labels: Record<string, string> = {
+              refund: 'Refund request',
+              large_discount: 'Discount beyond the floor',
+              custom_quote: 'Wants an item you may not stock',
+              complaint: 'Complaint',
+              other: 'Needs your call',
+            };
+            await send({
+              user_id: ctx.user_id,
+              to: prof.phone,
+              type: 'text',
+              force: true, // owner alert must always go out, even in quiet hours
+              idempotency_key: sha256(`escalate-owner|${data?.id}`),
+              message:
+                `🔔 ${labels[action_type] ?? 'Heads up'} — ${who} (${ctx.customer_phone})\n` +
+                `${reason}\n\n` +
+                `I told them: "${drafted_reply}"\n\n` +
+                `Open your dashboard to approve/edit, or just reply to them directly.`,
+            });
+          }
+        }
+
+        return { queued: true, approval_id: data?.id, instruction: 'Send the customer a brief, confident holding reply now.' };
       },
     }),
 
