@@ -39,6 +39,14 @@ const schema = z.object({
   WHAPI_TOKEN: z.string().min(10),
   WHAPI_PARTNER_KEY: z.string().optional().default(''),
 
+  // This service's own public URL, used to auto-register the Whapi inbound
+  // webhook so messages route back to us. Render injects RENDER_EXTERNAL_URL
+  // automatically; PUBLIC_BASE_URL lets you override (e.g. behind a custom
+  // domain). Either may be blank locally — webhook auto-registration is then
+  // skipped.
+  PUBLIC_BASE_URL: z.string().optional().default(''),
+  RENDER_EXTERNAL_URL: z.string().optional().default(''),
+
   // Shared secrets
   AGENT_ENGINE_SECRET: z.string().min(32),
   ADMIN_HMAC_SECRET: z.string().min(32),

@@ -72,6 +72,39 @@ export async function whapiMarkRead(token: string, message_id: string): Promise<
   }
 }
 
+/**
+ * PATCH a Whapi resource (e.g. /settings to register webhooks).
+ */
+export async function whapiPatch({ token, path, body }: SendArgs): Promise<WhapiResponse> {
+  const url = `${config.WHAPI_BASE_URL}${path}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let parsed: unknown = text;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      /* keep as text */
+    }
+    return { ok: res.ok, status: res.status, body: parsed };
+  } catch (err) {
+    logger.error({ err, path }, 'whapi PATCH failed');
+    return { ok: false, status: 0, body: { error: (err as Error).message } };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function whapiGet({ token, path }: { token: string; path: string }): Promise<WhapiResponse> {
   const url = `${config.WHAPI_BASE_URL}${path}`;
   const controller = new AbortController();

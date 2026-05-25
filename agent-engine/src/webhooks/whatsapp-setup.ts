@@ -10,12 +10,49 @@
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { supabase } from '../lib/supabase.js';
-import { whapiGet } from '../lib/whapi.js';
+import { whapiGet, whapiPatch } from '../lib/whapi.js';
 import { config } from '../config.js';
 import { logger } from '../lib/logger.js';
 import { audit } from '../lib/audit.js';
 
 const Schema = z.object({ user_id: z.string().uuid() });
+
+/**
+ * Point the Whapi channel's inbound webhook back at THIS service so messages
+ * actually reach /whapi/inbound. Channels were observed in production still
+ * pointing at an old n8n test URL + a requestbin, so no inbound ever arrived
+ * and Vector never replied. We overwrite the webhook list with our two
+ * endpoints. Best-effort: returns the registered base URL or null.
+ */
+async function registerInboundWebhook(): Promise<string | null> {
+  const base = (config.PUBLIC_BASE_URL || config.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '');
+  if (!/^https:\/\//i.test(base)) {
+    logger.warn({ base }, 'whatsapp-setup: no public base URL — skipping webhook auto-registration');
+    return null;
+  }
+  const webhooks = [
+    {
+      url: `${base}/whapi/inbound`,
+      mode: 'body',
+      events: [{ type: 'messages', method: 'post' }],
+    },
+    {
+      url: `${base}/whapi/channel-status`,
+      mode: 'body',
+      events: [
+        { type: 'statuses', method: 'post' },
+        { type: 'channel', method: 'patch' },
+      ],
+    },
+  ];
+  const res = await whapiPatch({ token: config.WHAPI_TOKEN, path: '/settings', body: { webhooks } });
+  if (!res.ok) {
+    logger.error({ status: res.status, body: res.body }, 'whatsapp-setup: webhook registration failed');
+    return null;
+  }
+  logger.info({ base }, 'whatsapp-setup: inbound webhook registered with Whapi');
+  return base;
+}
 
 export async function handleWhatsAppSetup(c: Context): Promise<Response> {
   const parsed = Schema.safeParse(await c.req.json().catch(() => ({})));
@@ -74,6 +111,18 @@ export async function handleWhatsAppSetup(c: Context): Promise<Response> {
     return c.json({ success: false, error: upErr.message }, 200);
   }
 
-  await audit({ user_id, workflow: 'whatsapp-setup', output: { status: whapi_status, channel_id } });
-  return c.json({ success: true, status: whapi_status });
+  // Re-point Whapi's inbound webhook at this service so messages actually
+  // reach the brain. (Production channels were found pointing at a dead n8n
+  // test URL + a requestbin.) Best-effort — never blocks setup.
+  const webhookBase = await registerInboundWebhook().catch((err) => {
+    logger.error({ err }, 'whatsapp-setup: webhook registration threw');
+    return null;
+  });
+
+  await audit({
+    user_id,
+    workflow: 'whatsapp-setup',
+    output: { status: whapi_status, channel_id, webhook_base: webhookBase },
+  });
+  return c.json({ success: true, status: whapi_status, webhook_registered: !!webhookBase });
 }
