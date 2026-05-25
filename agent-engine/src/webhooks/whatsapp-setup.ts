@@ -30,9 +30,12 @@ async function registerInboundWebhook(): Promise<string | null> {
     logger.warn({ base }, 'whatsapp-setup: no public base URL — skipping webhook auto-registration');
     return null;
   }
+  // Append the webhook token (if configured) so forged inbound POSTs without
+  // it are rejected. No-op when WHAPI_WEBHOOK_TOKEN is blank.
+  const tokenQs = config.WHAPI_WEBHOOK_TOKEN ? `?token=${encodeURIComponent(config.WHAPI_WEBHOOK_TOKEN)}` : '';
   const webhooks = [
     {
-      url: `${base}/whapi/inbound`,
+      url: `${base}/whapi/inbound${tokenQs}`,
       mode: 'body',
       events: [{ type: 'messages', method: 'post' }],
     },

@@ -32,6 +32,18 @@ const HOLDING_REPLY = "Got your message — I'll get back to you shortly 🙏";
 type Msg = NonNullable<WhapiInbound['messages']>[number];
 
 export async function handleInboundWebhook(c: Context): Promise<Response> {
+  // Opt-in webhook authentication: when WHAPI_WEBHOOK_TOKEN is configured, a
+  // forged POST without the matching ?token= is rejected. Default (blank) =
+  // accept all, preserving existing behaviour. Whapi has no request signing,
+  // so the URL token is our authenticity check.
+  if (config.WHAPI_WEBHOOK_TOKEN) {
+    const provided = c.req.query('token') ?? c.req.header('x-whapi-token') ?? '';
+    if (provided !== config.WHAPI_WEBHOOK_TOKEN) {
+      logger.warn('inbound webhook rejected — bad/missing token');
+      return c.json({ ok: true }, 200); // 200 so a prober learns nothing
+    }
+  }
+
   let payload: WhapiInbound;
   try {
     payload = (await c.req.json()) as WhapiInbound;

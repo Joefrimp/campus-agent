@@ -86,6 +86,18 @@ app.get('/health', handleHealth);
 app.get('/', (c) => c.text('agent-engine — running'));
 app.get('/config/pro-payment', handleProPaymentConfig);
 
+// --- Debug endpoints: gated. These expose tenant data, config, and secret
+//     fingerprints, so they MUST NOT be public. Require the shared secret as
+//     a ?key= query param (so they stay browser-openable) or the header.
+//     Open like: /debug/whapi?key=<AGENT_ENGINE_SECRET>
+app.use('/debug/*', async (c, next) => {
+  const provided = c.req.query('key') ?? c.req.header('x-eastern-ai-secret') ?? '';
+  if (provided !== config.AGENT_ENGINE_SECRET) {
+    return c.json({ error: 'unauthorized — append ?key=<AGENT_ENGINE_SECRET>' }, 401);
+  }
+  await next();
+});
+
 /**
  * Debug — trace the most recent inbound activity for a tenant. Shows what
  * happened to recent messages (replied / silently dropped / brain failure

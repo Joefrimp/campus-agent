@@ -47,6 +47,12 @@ const schema = z.object({
   PUBLIC_BASE_URL: z.string().optional().default(''),
   RENDER_EXTERNAL_URL: z.string().optional().default(''),
 
+  // Optional shared secret for inbound Whapi webhooks. When set, /whapi/inbound
+  // requires ?token=<this> (auto-appended during WhatsApp setup), which blocks
+  // forged inbound messages. Leave blank to accept all webhooks (default —
+  // preserves current behaviour so nothing breaks until you opt in).
+  WHAPI_WEBHOOK_TOKEN: z.string().optional().default(''),
+
   // Shared secrets
   AGENT_ENGINE_SECRET: z.string().min(32),
   ADMIN_HMAC_SECRET: z.string().min(32),
