@@ -143,9 +143,18 @@ export async function send(args: SendArgs): Promise<SendResult> {
     await tripBreaker(args.user_id, 'rate_limited');
     return { sent: false, reason: 'rate_limited', detail: lastResult?.body };
   }
-  if (status >= 400 && status < 500) {
+  // Auth/account-level 4xx (token revoked, channel suspended) → real channel
+  // problem, trip the breaker.
+  if (status === 401 || status === 403) {
     await tripBreaker(args.user_id, 'channel_problem');
     return { sent: false, reason: 'channel_problem', detail: lastResult?.body };
+  }
+  // Per-message 4xx (400/404/422 — invalid recipient, bad payload). This is
+  // NOT a channel health issue: a single junk recipient must never pause the
+  // whole channel and silence real customers. Fail just this send.
+  if (status >= 400 && status < 500) {
+    logger.warn({ user_id: args.user_id, status, to: args.to }, 'per-message 4xx — failing send only, breaker untouched');
+    return { sent: false, reason: 'error', detail: lastResult?.body };
   }
 
   // Unknown failure → DLQ

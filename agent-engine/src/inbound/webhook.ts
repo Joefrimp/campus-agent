@@ -56,6 +56,26 @@ async function processMessage(msg: Msg, channel_id?: string): Promise<void> {
   const from = msg.from;
   if (!from) return;
 
+  // Drop non-human senders: WhatsApp Channels / newsletters / status updates /
+  // broadcast posts / "@unknown". These are forwarded into the inbox but are
+  // NOT real customers — and any reply/ack we try to send them 4xxs at Whapi,
+  // which used to trip the circuit breaker and pause the whole channel.
+  // Real WhatsApp users always resolve to a phone number (≥8 digits).
+  const fromDigits = from.replace(/[^\d]/g, '');
+  const fromLower = from.toLowerCase();
+  const isGroupSender = msg.chat_id?.includes('@g.us'); // groups: from = real participant
+  if (
+    !isGroupSender &&
+    (fromLower.includes('broadcast') ||
+      fromLower.includes('newsletter') ||
+      fromLower.includes('status@') ||
+      fromLower === '@unknown' ||
+      fromDigits.length < 8)
+  ) {
+    logger.debug({ from, type: msg.type }, 'dropping non-human sender (channel/broadcast/unknown)');
+    return;
+  }
+
   const isVoice = msg.type === 'voice' || msg.type === 'audio' || !!msg.voice || !!msg.audio;
   const isImage = msg.type === 'image' || !!msg.image;
   let body = msg.text?.body ?? msg.image?.caption ?? '';
