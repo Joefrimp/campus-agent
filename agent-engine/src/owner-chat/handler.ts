@@ -126,12 +126,13 @@ export async function sendOwnerChatMessage(args: {
   let replyText = '';
   try {
     const out = await resilientGenerateText({
-      // No images → Flash-Lite (cheap, stretches free quota).
-      // Images attached → Gemini Flash (multimodal AND supports tools, so
-      // Vector can both SEE the image and call tools in the same turn).
-      // Groq fallback only kicks in for the text-only path (Groq has no
-      // vision); for image turns we rely on Gemini's multimodal quota.
-      model: hasImages ? models.agent : models.classifier,
+      // Use Gemini Flash (the agent model) for owner chat — NOT Flash-Lite.
+      // This is the operator's own console: low volume, quality matters, and
+      // Flash-Lite frequently calls a tool then returns empty text (the
+      // "couldn't summarise it cleanly" stub). Flash reliably does
+      // tool-call → summarise in one turn. Groq fallback covers the
+      // text-only path if Gemini is rate-limited (Groq has no vision).
+      model: models.agent,
       fallbackModel: hasImages ? undefined : models.groqFallback,
       system,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
