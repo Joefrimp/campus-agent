@@ -167,6 +167,32 @@ app.get('/debug/auth-check', (c) => {
   });
 });
 
+/**
+ * Debug — whapi channel probe.
+ * Calls the SAME Whapi endpoints that whatsapp-setup uses (with the system
+ * WHAPI_TOKEN) and returns the RAW response bodies so we can see exactly
+ * what state Whapi thinks the channel is in — and therefore why setup
+ * resolves to 'pending'. Shows only a token fingerprint, never the token.
+ * Safe to open in a browser. Remove once setup is confirmed working.
+ */
+app.get('/debug/whapi', async (c) => {
+  const { whapiGet } = await import('./lib/whapi.js');
+  const token = config.WHAPI_TOKEN ?? '';
+  const fp = token.length === 0 ? '(EMPTY — WHAPI_TOKEN not set!)' : `${token.slice(0, 4)}…${token.slice(-4)} (len ${token.length})`;
+  const [health, login, settings] = await Promise.all([
+    whapiGet({ token, path: '/health' }).catch((e) => ({ ok: false, status: 0, body: String(e) })),
+    whapiGet({ token, path: '/users/login' }).catch((e) => ({ ok: false, status: 0, body: String(e) })),
+    whapiGet({ token, path: '/settings' }).catch((e) => ({ ok: false, status: 0, body: String(e) })),
+  ]);
+  return c.json({
+    whapi_base_url: config.WHAPI_BASE_URL,
+    token_fingerprint: fp,
+    health: { http_status: health.status, ok: health.ok, body: health.body },
+    users_login: { http_status: login.status, ok: login.ok, body: login.body },
+    settings: { http_status: settings.status, ok: settings.ok, body: settings.body },
+  });
+});
+
 // --- Whapi → us (no shared secret; Whapi doesn't sign requests) ---
 app.post('/whapi/inbound', handleInboundWebhook);
 app.post('/whapi/channel-status', handleChannelStatus);
