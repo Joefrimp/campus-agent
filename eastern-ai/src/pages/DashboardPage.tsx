@@ -10,6 +10,7 @@ import { useWhatsAppChannel } from '../hooks/useWhatsAppChannel'
 import { useFinances } from '../hooks/useFinances'
 import { useAgentLogs } from '../hooks/useAgentLogs'
 import { useCatalogue } from '../hooks/useCatalogue'
+import { useUnansweredMessages } from '../hooks/useUnansweredMessages'
 
 function fmtMoney(n: number): string {
   return n.toFixed(2).replace(/\.00$/, '')
@@ -33,6 +34,7 @@ export function DashboardPage() {
   const { summary, loading: financesLoading } = useFinances(user?.id, '30d')
   const { logs, loading: logsLoading } = useAgentLogs(user?.id)
   const { items: catalogueItems } = useCatalogue(user?.id)
+  const { items: unanswered, loading: unansweredLoading } = useUnansweredMessages(user?.id, profile?.phone)
 
   // Top products (from raw orders → items)
   const topProducts: TopListItem[] = (() => {
@@ -208,6 +210,53 @@ export function DashboardPage() {
           </div>
         </Card>
       </div>
+
+      {/* Needs your attention — customer messages Vector didn't auto-reply to */}
+      <Card className={'p-5 ' + (unanswered.length > 0 ? 'border border-amber-500/30 bg-amber-500/[0.03]' : '')}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold text-text">Needs your attention</h2>
+            {unanswered.length > 0 && (
+              <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold bg-amber-500 text-black">
+                {unanswered.length}
+              </span>
+            )}
+          </div>
+          <span className="text-xs text-text-muted">Last 48h · not auto-replied</span>
+        </div>
+        {unansweredLoading ? (
+          <div className="h-20 animate-pulse rounded bg-surface-2" />
+        ) : unanswered.length === 0 ? (
+          <div className="px-2 py-6 text-sm text-text-muted text-center">
+            You're all caught up — nothing left unanswered 🎉
+          </div>
+        ) : (
+          <ul className="divide-y divide-border">
+            {unanswered.map((m) => (
+              <li key={m.from} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
+                <div className="h-7 w-7 rounded-full bg-amber-500/15 flex items-center justify-center flex-shrink-0 text-[10px] font-bold text-amber-500">
+                  {m.from.slice(-2)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-text truncate">{m.from}</p>
+                    <span className="text-xs text-text-muted flex-shrink-0">{relativeTime(m.when)}</span>
+                  </div>
+                  <p className="text-sm text-text-muted truncate">{m.last_message || '[no text]'}</p>
+                </div>
+                <a
+                  href={`https://wa.me/${m.from.replace(/\D/g, '')}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-shrink-0 text-xs font-medium text-accent hover:text-accent-hover whitespace-nowrap mt-0.5"
+                >
+                  Reply →
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
 
       {/* Top products + Low stock + Recent activity */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
