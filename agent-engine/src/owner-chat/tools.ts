@@ -233,6 +233,57 @@ export function buildOwnerTools(ctx: OwnerToolContext) {
       },
     }),
 
+    unanswered_messages: tool({
+      description:
+        "List recent customer messages Vector did NOT reply to — non-business chatter, smalltalk, or anything it flagged for the owner to handle personally. These never enter the approvals queue, so this is the only way to review them. Use when the owner asks about missed/unanswered messages, what came in, who texted, or what needs their personal attention.",
+      parameters: z.object({
+        since_hours: z.number().int().min(1).max(168).default(48).describe('Look-back window in hours (default 48)'),
+      }),
+      execute: async ({ since_hours }) => {
+        const since = new Date(Date.now() - since_hours * 3_600_000).toISOString();
+        const { data: logs } = await supabase
+          .from('message_logs')
+          .select('direction, contact_phone, content, created_at')
+          .eq('user_id', ctx.user_id)
+          .gte('created_at', since)
+          .order('created_at', { ascending: false })
+          .limit(400);
+        ctx.tool_call_count++;
+        const rows = logs ?? [];
+        // Real customers only: a phone-like contact (≥8 digits), not broadcasts/@unknown.
+        const isCustomer = (p: string | null) => !!p && /\d{8,}/.test(p);
+        // Phones we sent an actual outbound reply TO (so they're handled).
+        const repliedTo = new Set(
+          rows.filter((r) => r.direction === 'outbound').map((r) => r.contact_phone),
+        );
+        // Latest inbound per customer phone (rows are newest-first).
+        const latestByPhone = new Map<string, { content: string | null; created_at: string }>();
+        for (const r of rows) {
+          if (r.direction !== 'inbound' || !isCustomer(r.contact_phone)) continue;
+          if (!latestByPhone.has(r.contact_phone)) {
+            latestByPhone.set(r.contact_phone, { content: r.content, created_at: r.created_at });
+          }
+        }
+        const items = [...latestByPhone.entries()]
+          .filter(([phone]) => !repliedTo.has(phone))
+          .map(([phone, r]) => ({
+            from: phone,
+            last_message: (r.content ?? '').slice(0, 200),
+            when: r.created_at,
+          }))
+          .slice(0, 25);
+        return {
+          ok: true,
+          count: items.length,
+          window_hours: since_hours,
+          items,
+          instruction: items.length
+            ? 'List these for the owner clearly (who + what they said + when). Offer to draft a reply they can send, but do NOT message the customer yourself.'
+            : 'Tell the owner nothing came in unanswered in this window.',
+        };
+      },
+    }),
+
     draft_marketing_message: tool({
       description:
         "Write a short marketing message the owner can send to customers or a WhatsApp group. Use when they ask for promo copy, a launch announcement, or a re-engagement message.",
