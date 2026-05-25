@@ -297,6 +297,7 @@ async function processMessage(msg: Msg, channel_id?: string): Promise<void> {
         to: from,
         message: matchReply,
         type: 'text',
+        force: true, // reactive reply — bypass quiet hours
         idempotency_key: sha256(`img-match|${msg.id}`),
       });
       await Promise.allSettled([
@@ -338,6 +339,7 @@ async function processMessage(msg: Msg, channel_id?: string): Promise<void> {
         to: from,
         message: "Got your photo 📸 What can I help you with?",
         type: 'text',
+        force: true, // reactive reply — bypass quiet hours
         idempotency_key: sha256(`img-ack|${msg.id}`),
       });
       return;
@@ -659,11 +661,16 @@ async function processBody(args: BodyArgs): Promise<void> {
   }
 
   // 5. Send the reply
+  //    force=true: this is a REACTIVE reply to a customer who just messaged
+  //    us. Quiet hours only gate PROACTIVE/scheduled sends (follow-ups,
+  //    marketing) — never a direct reply, or the agent would go silent all
+  //    night and the customer would never hear back.
   const sendResult = await send({
     user_id: tenant_id,
     to: from,
     message: brainResult.text,
     type: 'text',
+    force: true,
     idempotency_key: sha256(`reply|${source_id}`),
   });
 
