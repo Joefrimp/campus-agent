@@ -10,8 +10,10 @@ import {
   buildWeeklyReport,
   renderWeeklyReportPdf,
   renderWeeklyReportXlsx,
+  renderContentPdf,
+  renderContentXlsx,
 } from '../lib/reports.js';
-import { renderBusinessDocx } from './docx.js';
+import { renderBusinessDocx, renderContentDocx } from './docx.js';
 import { logger } from '../lib/logger.js';
 
 export interface OwnerToolContext {
@@ -65,27 +67,65 @@ export function buildOwnerTools(ctx: OwnerToolContext) {
 
     generate_report: tool({
       description:
-        "Generate a downloadable weekly business report file. Use when the owner asks for a 'report', 'PDF', 'spreadsheet', 'doc', or anything they could download or print. The file is uploaded to storage and a download link is attached to your reply.",
+        "Generate a downloadable file (PDF / XLSX / DOCX) and attach a download link to your reply.\n\n" +
+        "TWO modes — pick the right one:\n" +
+        "• report_type='metrics' — the canned weekly business-performance report (revenue, expenses, orders, top products/customers). ONLY use this when the owner explicitly wants their sales/performance numbers. It pulls live data; you pass NO content.\n" +
+        "• report_type='document' — ANY other document: a promo, marketing message, letter, plan, pricing sheet, strategy memo, meeting notes, etc. You MUST pass the full `content` (the exact text to put in the file) and a `title`. The file contains EXACTLY what you put in `content` — nothing is auto-filled. If the owner says 'put THIS in a PDF' referring to something you just wrote, copy that text verbatim into `content`.\n\n" +
+        "Never claim a file contains something you did not pass in `content`.",
       parameters: z.object({
-        format: z.enum(['pdf', 'xlsx', 'docx']).describe("'pdf' for visual summary, 'xlsx' for raw spreadsheet, 'docx' for editable Word doc"),
-        title_hint: z.string().optional().describe("Optional title for the doc (e.g. 'Sales report — Week 19')"),
+        format: z.enum(['pdf', 'xlsx', 'docx']).describe("'pdf' for a polished printable, 'docx' for an editable Word doc, 'xlsx' for a spreadsheet"),
+        report_type: z.enum(['metrics', 'document']).default('document')
+          .describe("'metrics' = the weekly sales/performance report (live data, no content needed). 'document' = a free-form doc whose body is whatever you pass in `content`."),
+        title: z.string().optional().describe("Title shown at the top of the file, e.g. 'Friday Promo — Ako Laptops'"),
+        content: z.string().optional()
+          .describe("REQUIRED when report_type='document'. The full body text to render. Supports light Markdown: '# Heading', '## Subheading', '- bullet', '**bold**'. Put the COMPLETE message/document here."),
       }),
-      execute: async ({ format, title_hint }) => {
+      execute: async ({ format, report_type, title, content }) => {
         try {
-          const data = await buildWeeklyReport(ctx.user_id, new Date());
+          // Resolve business name for the document header.
+          const { data: prof } = await supabase
+            .from('profiles').select('business_name').eq('id', ctx.user_id).maybeSingle();
+          const businessName = prof?.business_name ?? 'Your business';
+
           let buf: Buffer;
           let mime: string;
-          if (format === 'pdf') {
-            buf = await renderWeeklyReportPdf(data);
-            mime = 'application/pdf';
-          } else if (format === 'xlsx') {
-            buf = await renderWeeklyReportXlsx(data);
-            mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+          if (report_type === 'document') {
+            if (!content || content.trim().length < 2) {
+              return {
+                ok: false,
+                error: 'document mode needs content',
+                instruction: "You chose report_type='document' but passed no `content`. Re-call generate_report with the full text to render in the `content` field. Do NOT tell the owner the file is ready.",
+              };
+            }
+            const docTitle = title?.trim() || 'Document';
+            if (format === 'pdf') {
+              buf = await renderContentPdf({ title: docTitle, content, business_name: businessName });
+              mime = 'application/pdf';
+            } else if (format === 'xlsx') {
+              buf = await renderContentXlsx({ title: docTitle, content });
+              mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+            } else {
+              buf = await renderContentDocx({ title: docTitle, content, business_name: businessName });
+              mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+            }
           } else {
-            buf = await renderBusinessDocx(data, title_hint);
-            mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+            const data = await buildWeeklyReport(ctx.user_id, new Date());
+            if (format === 'pdf') {
+              buf = await renderWeeklyReportPdf(data);
+              mime = 'application/pdf';
+            } else if (format === 'xlsx') {
+              buf = await renderWeeklyReportXlsx(data);
+              mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+            } else {
+              buf = await renderBusinessDocx(data, title);
+              mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+            }
           }
-          const filename = (title_hint ?? `weekly-${new Date().toISOString().slice(0, 10)}`)
+
+          const filename = (title ?? (report_type === 'metrics'
+            ? `weekly-${new Date().toISOString().slice(0, 10)}`
+            : `document-${new Date().toISOString().slice(0, 10)}`))
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-|-$/g, '')
@@ -202,12 +242,30 @@ export function buildOwnerTools(ctx: OwnerToolContext) {
         audience: z.string().optional().describe("Who it's for (e.g. 'returning customers', 'WhatsApp group')"),
       }),
       execute: async (args) => {
-        // The agent itself composes the message in its reply — this tool
-        // exists so the call shows in the trail as a deliberate action.
+        // Pull the real catalogue so the message is grounded in actual
+        // products + prices instead of invented ones.
+        const { data: products } = await supabase
+          .from('price_list')
+          .select('name, price, in_stock, stock_qty, category')
+          .eq('user_id', ctx.user_id)
+          .order('updated_at', { ascending: false })
+          .limit(20);
+        const { data: prof } = await supabase
+          .from('profiles').select('business_name').eq('id', ctx.user_id).maybeSingle();
         ctx.tool_call_count++;
+        const hasProducts = (products?.length ?? 0) > 0;
         return {
           ok: true,
-          instruction: `Compose a 2-4 line marketing message in ${args.tone} tone for: ${args.goal}${args.audience ? `. Audience: ${args.audience}` : ''}. Output the message in your reply.`,
+          business_name: prof?.business_name ?? null,
+          catalogue: products ?? [],
+          instruction:
+            `Write a ${args.tone}, ready-to-send WhatsApp marketing message for: ${args.goal}` +
+            `${args.audience ? ` (audience: ${args.audience})` : ''}.\n` +
+            `RULES:\n` +
+            `- Ground it in the REAL products/prices in \`catalogue\` above. ${hasProducts ? 'Name an actual product and its actual price.' : "The catalogue is EMPTY — do not invent a product. Instead tell the owner you need a product (or catalogue) before you can write a grounded promo, and offer to write a generic template they can fill in."}\n` +
+            `- NEVER invent product names, prices, or stock counts. NEVER leave placeholders like [Your Brand], [short URL], [price], [X units]. Use the real business name${prof?.business_name ? ` (“${prof.business_name}”)` : ''} and omit any link/number you don't actually have.\n` +
+            `- Sound like a sharp human operator, not a template: a hook, the offer, one concrete reason to act, a clear next step. 3-6 lines. Light emoji only if it fits the tone.\n` +
+            `- Output ONLY the final message text — no preamble, no "here's your message".`,
         };
       },
     }),
